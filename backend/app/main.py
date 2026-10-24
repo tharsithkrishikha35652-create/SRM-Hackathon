@@ -39,6 +39,9 @@ MEALS = [
     {"id": "snacks", "name": "Snacks", "start": "16:00", "end": "18:00", "time": "4:00 PM – 6:00 PM"},
     {"id": "dinner", "name": "Dinner", "start": "19:00", "end": "22:00", "time": "7:00 PM – 10:00 PM"},
 ]
+def menu_for_date(day, dietary="non_veg"):
+    day_name = day.strftime("%A").lower()
+    return {m: get_official_menu(day_name, m, dietary) for m in ["breakfast", "lunch", "snacks", "dinner"]}
 
 def connect():
     c = sqlite3.connect(DB_PATH, timeout=10)

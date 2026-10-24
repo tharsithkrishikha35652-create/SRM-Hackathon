@@ -17,11 +17,19 @@ These are local demonstration credentials only.
 
 ## Run locally (three terminals)
 
+From the repository root, install both frontends once:
+
+```bash
+npm install
+```
+
+Then use the root scripts below, or run `start-windows.bat` on Windows.
+
 ### 1. Backend
 ```bash
 cd backend
 python -m venv .venv
-# Windows PowerShell: .venv\\Scripts\\Activate.ps1
+# Windows PowerShell: .venv\Scripts\Activate.ps1
 # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 python run.py
@@ -30,18 +38,17 @@ API: `http://127.0.0.1:8000` · API docs: `http://127.0.0.1:8000/docs`
 
 ### 2. Student app
 ```bash
-cd student-app
-npm install
-npm run dev
+npm run dev:student
 ```
 Open `http://localhost:5173`.
 
 ### 3. Manager web
 ```bash
-cd manager-web
-npm install
-npm run dev
+npm run dev:manager
 ```
+
+Build both frontends from the repository root with `npm run build`.
+
 Open `http://localhost:5174`.
 
 Windows users can use `start-windows.bat` to launch all three processes. The manager frontend alone can be started with `manager-web/start-manager-web.bat` after the backend is running. See `IMPLEMENTATION_REPORT.md` for checks performed and remaining verification limits.
