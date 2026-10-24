@@ -1,0 +1,6 @@
+# AI prompt log
+
+1. Build a complete student-first mess feedback app with a manager dashboard using React + Vite, FastAPI and SQLite.
+2. Implement role-aware authentication, persistent sessions, daily menu, complete menu, meal-window ratings, student feedback history, complaint submission and a manager dashboard.
+3. Aggregate repetitive complaints into anonymous issue groups, calculate counts from SQLite, support manager responses and 24-hour deadlines, and use a deterministic fallback when no LLM API key exists.
+4. Implement a responsive mobile-first visual system with persistent dark/light mode and a clear, polished interface inspired by the supplied MessMate UI reference.
