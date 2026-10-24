@@ -168,6 +168,11 @@ def init_db():
                 ("manager@srm.edu", "Mess Manager", "manager", hash_password("Manager@123"))
             )
 
+        c.execute(
+            "INSERT OR IGNORE INTO users(identifier,name,role,password_hash,department,semester,dietary_preference) VALUES(?,?,?,?,?,?,?)",
+            ("demo.student@srm.edu", "Demo Student", "student", hash_password("DemoStudent@123"), "Computer Science", "Semester 1", "non_veg")
+        )
+
         # Seed initial complaints if empty
         if c.execute("SELECT COUNT(*) n FROM complaints").fetchone()["n"] == 0:
             today = datetime.now(TZ).date().isoformat()
