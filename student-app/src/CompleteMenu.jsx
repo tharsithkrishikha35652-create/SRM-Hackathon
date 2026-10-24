@@ -9,7 +9,7 @@ const DIETARY_OPTIONS = [
 const MEALS = [
   { id: 'breakfast', label: 'Breakfast', time: '7:00–11:00 AM' },
   { id: 'lunch', label: 'Lunch', time: '12:30–3:00 PM' },
-  { id: 'snacks', label: 'Snacks', time: '4:00–6:00 PM' },
+  { id: 'snacks', label: 'Snacks', time: '3:00–5:00 PM' },
   { id: 'dinner', label: 'Dinner', time: '7:00–10:00 PM' },
 ];
 

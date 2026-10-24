@@ -57,7 +57,7 @@ Windows users can use `start-windows.bat` to launch all three processes. The man
 The manager can view menu items by date and meal, add new items, edit existing items and delete items. Menu entries are stored in SQLite. Manager feedback views return grouped issue summaries and anonymised rating aggregates, not individual student identities.
 
 ## Feedback windows
-Asia/Kolkata: breakfast 07:00–11:00, lunch 12:30–15:00, snacks 16:00–18:00, dinner 19:00–22:00. The backend enforces these windows.
+Asia/Kolkata: breakfast 07:00–11:00, lunch 12:30–15:00, snacks 15:00–17:00, dinner 19:00–22:00. The backend enforces these windows.
 
 ## AI summaries
 The manager issue summaries use the configured LLM integration when an API key is available. Otherwise, the app uses a deterministic rule-based fallback. The interface labels the mode honestly.

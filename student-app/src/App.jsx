@@ -7,7 +7,7 @@ const APP_ROLE = import.meta.env.VITE_APP_ROLE || 'both';
 const mealInfo = {
  breakfast:{name:'Breakfast',time:'7:00 AM – 11:00 AM',icon:Coffee,items:['Idli','Sambar','Coconut chutney','Pongal','Tea'],color:'peach',image:'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=700&q=85'},
  lunch:{name:'Lunch',time:'12:30 PM – 3:00 PM',icon:Soup,items:['Rice','Sambar','Rasam','Chicken curry / vegetable kurma','Cabbage poriyal','Curd'],color:'green',image:'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=700&q=85'},
- snacks:{name:'Snacks',time:'4:00 PM – 6:00 PM',icon:Coffee,items:['Tea / Coffee','Sundal','Seasonal snack'],color:'yellow',image:'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=700&q=85'},
+ snacks:{name:'Snacks',time:'3:00 PM – 5:00 PM',icon:Coffee,items:['Tea / Coffee','Sundal','Seasonal snack'],color:'yellow',image:'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=700&q=85'},
  dinner:{name:'Dinner',time:'7:00 PM – 10:00 PM',icon:Utensils,items:['Chapati','Paneer gravy / chicken curry','Dal','Curd','Pickle'],color:'purple',image:'https://images.unsplash.com/photo-1547592180-85f173990554?auto=format&fit=crop&w=700&q=85'}
 };
 const fallbackMenus = Object.entries(mealInfo).map(([id,m])=>({id,...m,status:'closed'}));

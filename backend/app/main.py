@@ -36,7 +36,7 @@ app.add_middleware(
 MEALS = [
     {"id": "breakfast", "name": "Breakfast", "start": "07:00", "end": "11:00", "time": "7:00 AM – 11:00 AM"},
     {"id": "lunch", "name": "Lunch", "start": "12:30", "end": "15:00", "time": "12:30 PM – 3:00 PM"},
-    {"id": "snacks", "name": "Snacks", "start": "16:00", "end": "18:00", "time": "4:00 PM – 6:00 PM"},
+    {"id": "snacks", "name": "Snacks", "start": "15:00", "end": "17:00", "time": "3:00 PM – 5:00 PM"},
     {"id": "dinner", "name": "Dinner", "start": "19:00", "end": "22:00", "time": "7:00 PM – 10:00 PM"},
 ]
 def menu_for_date(day, dietary="non_veg"):

@@ -8,7 +8,7 @@ const STORE_KEY = 'messmate_manager_session';
 const MEALS = [
   { id: 'breakfast', name: 'Breakfast', time: '7:00 AM – 11:00 AM', icon: Coffee },
   { id: 'lunch', name: 'Lunch', time: '12:30 PM – 3:00 PM', icon: Soup },
-  { id: 'snacks', name: 'Snacks', time: '4:00 PM – 6:00 PM', icon: Salad },
+  { id: 'snacks', name: 'Snacks', time: '3:00 PM – 5:00 PM', icon: Salad },
   { id: 'dinner', name: 'Dinner', time: '7:00 PM – 10:00 PM', icon: Utensils }
 ];
 const NAV = [
@@ -52,6 +52,11 @@ function App() {
   const loadOverview = useCallback(async (showLoader = true) => { if (!token) return; if (showLoader) setLoading(true); setError(''); try { const [data, feedback] = await Promise.all([api('/manager/overview', token), api('/manager/feedback', token)]); setOverview(data); setFeedbackData(feedback.items || []); } catch (e) { setError(e.message); if (/sign in|session/i.test(e.message)) { localStorage.removeItem(STORE_KEY); setSession(null); } } finally { setLoading(false); } }, [token]);
   const loadMenu = useCallback(async (date = menuDate, diet = menuDietary) => { if (!token) return; setLoading(true); setError(''); try { const data = await api(`/manager/menu?menu_date=${encodeURIComponent(date)}&dietary=${encodeURIComponent(diet)}`, token); setMenu(data.items || []); } catch (e) { setError(e.message); } finally { setLoading(false); } }, [token, menuDate, menuDietary]);
   useEffect(() => { if (token) loadOverview(); }, [token, loadOverview]);
+  useEffect(() => {
+    if (!token) return undefined;
+    const interval = setInterval(() => loadOverview(false), 10000);
+    return () => clearInterval(interval);
+  }, [token, loadOverview]);
   useEffect(() => { if (token && active === 'menu') loadMenu(menuDate, menuDietary); }, [token, active, menuDate, menuDietary, loadMenu]);
   async function triggerAI() { try { await api('/manager/ai/trigger', token, { method: 'POST' }); setToast('AI background analysis queued.'); setTimeout(() => loadOverview(false), 1500); } catch (e) { setError(e.message); } }
   async function login(identifier, password) { setBusy(true); setLoginError(''); try { const data = await api('/auth/login', null, { method: 'POST', body: JSON.stringify({ identifier, password, role: 'manager' }) }); setSession(data); localStorage.setItem(STORE_KEY, JSON.stringify(data)); setTheme(data.user?.theme || theme); setToast('Signed in successfully.'); } catch (e) { setLoginError(e.message); } finally { setBusy(false); } }

@@ -28,7 +28,7 @@ const meals = {
   },
   snacks: {
     name: 'Snacks',
-    time: '4:00 PM - 6:00 PM',
+    time: '3:00 PM - 5:00 PM',
     items: ['Tea / Coffee', 'Sundal', 'Seasonal snack'],
     color: 'yellow',
     image: 'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=700&q=85',
@@ -223,7 +223,7 @@ function StudentHomepage({ session }) {
     setError('');
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/feedback', {
+      const response = await fetch(`${API}/feedback`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -414,8 +414,18 @@ function StudentHomepage({ session }) {
 
 export function StudentEntry({ App }) {
   const [session] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('messmate_session_both') || 'null'); } catch { return null; }
+    try {
+      const stored = JSON.parse(localStorage.getItem('messmate_session_both') || 'null');
+      if (stored?.token && stored.user?.role !== 'student') {
+        localStorage.removeItem('messmate_session_both');
+        return null;
+      }
+      return stored;
+    } catch {
+      localStorage.removeItem('messmate_session_both');
+      return null;
+    }
   });
 
-  return session?.token ? <StudentHomepage session={session} /> : <App />;
+  return session?.token && session.user?.role === 'student' ? <StudentHomepage session={session} /> : <App />;
 }
