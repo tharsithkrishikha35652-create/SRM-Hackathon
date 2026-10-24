@@ -24,6 +24,17 @@ MENUS = {
  "snacks":["Tea / Coffee","Sundal","Seasonal snack"],
  "dinner":["Chapati","Paneer gravy / chicken curry","Dal","Curd","Pickle"]
 }
+WEEKLY_MENU = {
+ "monday":{"breakfast":["Sweet Pongal","Pongal","Methu vadai","Sambar","Coconut chutney","Tea / Coffee / Milk"],"lunch":["Rice","Vatha kuzhambu","Keerai kootu","Rasam","Buttermilk","Vadagam","Pickle","Gulab jamun"],"snacks":["Tea cake","Tea / Coffee / Milk"],"dinner":["Onion uthappam","Sambar","Paruppu chutney","Mint chutney","Boost"]},
+ "tuesday":{"breakfast":["Samba rava kichadi","Idiyappam","Coconut milk","Veg kurma","Boiled egg","Tea / Coffee / Milk"],"lunch":["Rice","Sambar","Beetroot poriyal","Rasam","Buttermilk","Botti appalam","Pickle"],"snacks":["Butter biscuit","Tea / Coffee / Milk"],"dinner":["Chapathi","Chenna masala / Veg kurma","Curd rice","Lemon juice"]},
+ "wednesday":{"breakfast":["Semiya kichadi","Coconut chutney","Bread jam","Tea / Coffee / Milk"],"lunch":["Ghee rice","Gobi manchurian / Mushroom gravy / Paneer gravy","Rice","Rasam","Curd","Nannari sarbath"],"snacks":["Keerai vadai","Tea / Coffee / Milk"],"dinner":["Idly","Sambar","Coconut chutney","Podi","Oil","Badam milk"]},
+ "thursday":{"breakfast":["Kal dosai","Sambar","Groundnut chutney","Tea / Coffee / Milk"],"lunch":["Rice","Sambar","Cabbage poriyal","Boiled egg","Vadagam","Rasam","Buttermilk","Pickle","Banana"],"snacks":["White chenna / Black chenna","Tea / Coffee / Milk"],"dinner":["Chapathi","Mushroom gravy / Paneer butter masala","Curd rice","Lemon juice"]},
+ "friday":{"breakfast":["Idly","Sambar / Tomato kurma","Coconut chutney","Idly podi","Oil","Fruit kesari","Tea / Coffee / Milk"],"lunch":["Rice","Dhall","Potato peas poriyal","Podi","Oil","Ghee","Rasam","Curd","Appam","Pickle","Semiya payasam / Dhall payasam"],"snacks":["Pani poori","Tea / Coffee / Milk"],"dinner":["Veg pulao","Gobi manchurian","Onion raita","Nannari sarbath"]},
+ "saturday":{"breakfast":["Poori","Chenna masala","Coconut chutney","Tea / Coffee / Milk"],"lunch":["Rice","Sambar","Yam poriyal","Vadagam","Rasam","Buttermilk","Pickle"],"snacks":["Groundnut","Tea / Coffee / Milk"],"dinner":["Dosai","Potato masala","Kara chutney","Paruppu chutney","Mint chutney","Milk"]},
+ "sunday":{"breakfast":["Bread omelet","Bread toast","Rava kichadi","Kurma","Jam","Butter","Tomato sauce","Chilli sauce","Tea / Coffee / Milk"],"lunch":["Veg pulao / Veg biriyani","Saivai dish / Gobi 65","Paneer manchurian","Onion raita","Rice","Rasam","Dairy day ice cream"],"snacks":["Goodday biscuit","Tea / Coffee / Milk"],"dinner":["Lemon rice","Curd rice","Paruppu thuvaial","Vadagam","Pickle","Red banana / Morris banana"]}
+}
+def menu_for_date(day):
+    return WEEKLY_MENU.get(day.strftime("%A").lower(), MENUS)
 
 def connect():
     c=sqlite3.connect(DB_PATH, timeout=10); c.row_factory=sqlite3.Row; c.execute("PRAGMA foreign_keys=ON"); return c
@@ -177,13 +188,14 @@ def set_theme(body: ThemeBody,user=Depends(current_user)):
 @app.get("/api/menu/today")
 def today_menu(user=Depends(current_user)):
     now=datetime.now(TZ); active=active_meal(now)
-    meals=[{**m,"items":MENUS[m["id"]],"status":"open" if active and active["id"]==m["id"] else ("upcoming" if now.strftime("%H:%M")<m["start"] else "closed")} for m in MEALS]
+    menus=menu_for_date(now.date())
+    meals=[{**m,"items":menus[m["id"]],"status":"open" if active and active["id"]==m["id"] else ("upcoming" if now.strftime("%H:%M")<m["start"] else "closed")} for m in MEALS]
     return {"date":now.date().isoformat(),"date_label":now.strftime("%a, %d %b %Y"),"active_meal":active["id"] if active else None,"meals":meals}
 
 @app.get("/api/menu/complete")
 def complete_menu(user=Depends(current_user)):
     today=datetime.now(TZ).date()
-    return {"days":[{"date":(today+timedelta(days=i)).isoformat(),"label":(today+timedelta(days=i)).strftime("%A, %d %b"),"meals":[{**m,"items":MENUS[m["id"]]} for m in MEALS]} for i in range(7)]}
+    return {"days":[{"date":(today+timedelta(days=i)).isoformat(),"label":(today+timedelta(days=i)).strftime("%A, %d %b %Y"),"meals":[{**m,"items":menu_for_date(today+timedelta(days=i))[m["id"]]} for m in MEALS]} for i in range(7)]}
 
 @app.get("/api/feedback/mine")
 def my_feedback(user=Depends(require_role("student"))):

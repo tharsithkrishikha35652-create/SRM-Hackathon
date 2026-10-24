@@ -1,0 +1,18 @@
+{
+  "name": "messmate",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "student-app",
+    "manager-web"
+  ],
+  "scripts": {
+    "install:all": "npm install --workspaces",
+    "dev": "npm run dev:student",
+    "dev:student": "npm run dev --workspace messmate-student-app",
+    "dev:manager": "npm run dev --workspace messmate-manager-web",
+    "build": "npm run build --workspaces",
+    "build:student": "npm run build --workspace messmate-student-app",
+    "build:manager": "npm run build --workspace messmate-manager-web"
+  }
+}

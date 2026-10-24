@@ -19,6 +19,14 @@ These are local demo credentials only. Change them before any real deployment.
 
 ## Run locally (three terminals)
 
+From the repository root, install both frontends once:
+
+```bash
+npm install
+```
+
+Then use the root scripts below, or run `start-windows.bat` on Windows.
+
 ### 1. Backend
 
 ```bash
@@ -35,9 +43,7 @@ API: `http://127.0.0.1:8000` · API docs: `http://127.0.0.1:8000/docs`
 ### 2. Student app
 
 ```bash
-cd student-app
-npm install
-npm run dev
+npm run dev:student
 ```
 
 Open `http://localhost:5173`.
@@ -45,10 +51,10 @@ Open `http://localhost:5173`.
 ### 3. Manager web dashboard
 
 ```bash
-cd manager-web
-npm install
-npm run dev
+npm run dev:manager
 ```
+
+Build both frontends from the repository root with `npm run build`.
 
 Open `http://localhost:5174`.
 
