@@ -1,21 +1,19 @@
-# MessMate — separated student app and manager web dashboard
+# MessMate — Student App + WebApp Management Interface
 
-MessMate is now split into two independent React/Vite frontends sharing one FastAPI + SQLite backend.
+This project contains two separate React/Vite frontends and one shared FastAPI + SQLite backend.
 
-## Project layout
+- `student-app/` — student-facing mobile-first app (port 5173).
+- `manager-web/` — manager-facing **WebApp Management Interface** (port 5174), redesigned from the supplied screenshot reference.
+- `backend/` — shared API, authentication, SQLite persistence, menu management, anonymised complaint aggregation, manager responses and deadlines.
 
-- `student-app/` — student-facing, mobile-first app (port 5173). Includes today's menu, complete menu, meal ratings, complaints and personal feedback history. It only offers student login.
-- `manager-web/` — manager-facing web dashboard (port 5174). Includes grouped complaint insights, report counts, response deadlines and manager responses. It only offers manager login.
-- `backend/` — shared FastAPI API and SQLite database. Role checks remain enforced by the backend.
-
-The two frontends have separate local session keys and separate theme preferences. They do not share dashboard navigation.
+## Manager web interface
+The manager frontend includes Manager Login, Dashboard, Menu Management, Feedback & Complaints, AI Insights, Responses, Reports and Settings. The UI uses a palette sampled from the supplied reference image, a standard system font stack, and standard Lucide icons; no generated font/theme assets are imported.
 
 ## Demo accounts
-
 - Student: `student@srm.edu` / `Student@123`
 - Manager: `manager@srm.edu` / `Manager@123`
 
-These are local demo credentials only. Change them before any real deployment.
+These are local demonstration credentials only.
 
 ## Run locally (three terminals)
 
@@ -28,7 +26,6 @@ npm install
 Then use the root scripts below, or run `start-windows.bat` on Windows.
 
 ### 1. Backend
-
 ```bash
 cd backend
 python -m venv .venv
@@ -37,19 +34,15 @@ python -m venv .venv
 pip install -r requirements.txt
 python run.py
 ```
-
 API: `http://127.0.0.1:8000` · API docs: `http://127.0.0.1:8000/docs`
 
 ### 2. Student app
-
 ```bash
 npm run dev:student
 ```
-
 Open `http://localhost:5173`.
 
-### 3. Manager web dashboard
-
+### 3. Manager web
 ```bash
 npm run dev:manager
 ```
@@ -58,18 +51,19 @@ Build both frontends from the repository root with `npm run build`.
 
 Open `http://localhost:5174`.
 
+Windows users can use `start-windows.bat` to launch all three processes. The manager frontend alone can be started with `manager-web/start-manager-web.bat` after the backend is running. See `IMPLEMENTATION_REPORT.md` for checks performed and remaining verification limits.
+
+## Manager menu API
+The manager can view menu items by date and meal, add new items, edit existing items and delete items. Menu entries are stored in SQLite. Manager feedback views return grouped issue summaries and anonymised rating aggregates, not individual student identities.
+
 ## Feedback windows
+Asia/Kolkata: breakfast 07:00–11:00, lunch 12:30–15:00, snacks 16:00–18:00, dinner 19:00–22:00. The backend enforces these windows.
 
-Configured for Asia/Kolkata: breakfast 07:00–11:00, lunch 12:30–15:00, snacks 16:00–18:00, dinner 19:00–22:00. The backend enforces these windows.
+## AI summaries
+The manager issue summaries use the configured LLM integration when an API key is available. Otherwise, the app uses a deterministic rule-based fallback. The interface labels the mode honestly.
 
-## Optional LLM summaries
-
-Manager complaint aggregation has a local deterministic fallback. To enable the optional OpenAI-compatible LLM integration, configure `LLM_API_KEY`, `LLM_BASE_URL` and `LLM_MODEL` in the backend environment.
-
-## Scope and limitations
-
-- Student and manager UIs are separate frontends but use the same backend and database.
-- Demo menu and feedback data are fictional.
-- Official college menu integration and the future risk-score formula are not implemented.
-- External meal photos require an internet connection.
-- This is a hackathon demo, not a production-hardened deployment.
+## Limitations
+- The college's official menu API is not connected.
+- The future risk-score formula is not implemented because its constraints are not yet defined.
+- Demo records are fictional. External meal photographs require an internet connection.
+- This is a hackathon MVP, not a production-hardened deployment.

@@ -4,3 +4,9 @@
 2. Implement role-aware authentication, persistent sessions, daily menu, complete menu, meal-window ratings, student feedback history, complaint submission and a manager dashboard.
 3. Aggregate repetitive complaints into anonymous issue groups, calculate counts from SQLite, support manager responses and 24-hour deadlines, and use a deterministic fallback when no LLM API key exists.
 4. Implement a responsive mobile-first visual system with persistent dark/light mode and a clear, polished interface inspired by the supplied MessMate UI reference.
+
+2026-10-24 — Manager web interface redesign
+- Reference: user-supplied Web UI.jpeg storyboard for manager login, dashboard, menu management, feedback/complaints, AI insights and response workflow.
+- Implemented a manager-only multi-page React interface in manager-web/src/App.jsx and styles in manager-web/src/styles.css.
+- Visual constraints: use the supplied screenshot as the source reference; use a restrained palette sampled from it, system fonts, and standard Lucide icon components. No generated font assets or external design system was added.
+- Added FastAPI endpoints for manager menu CRUD and anonymised manager feedback records; menu items persist in SQLite.
