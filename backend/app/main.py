@@ -49,10 +49,19 @@ def init_db():
         CREATE TABLE IF NOT EXISTS complaints(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), meal_id TEXT NOT NULL, service_date TEXT NOT NULL, category TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'Submitted', created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS issue_groups(id INTEGER PRIMARY KEY, meal_id TEXT NOT NULL, service_date TEXT NOT NULL, issue_key TEXT NOT NULL, title TEXT NOT NULL, summary TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'Open', response TEXT DEFAULT '', responded_at TEXT, deadline TEXT NOT NULL, UNIQUE(meal_id, service_date, issue_key));
         CREATE TABLE IF NOT EXISTS complaint_group_links(complaint_id INTEGER PRIMARY KEY REFERENCES complaints(id) ON DELETE CASCADE, group_id INTEGER NOT NULL REFERENCES issue_groups(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS menu_items(id INTEGER PRIMARY KEY, menu_date TEXT NOT NULL, meal_id TEXT NOT NULL, name TEXT NOT NULL, description TEXT DEFAULT '', dietary_type TEXT NOT NULL DEFAULT 'Veg');
         ''')
         if c.execute("SELECT COUNT(*) n FROM users").fetchone()["n"] == 0:
             c.execute("INSERT INTO users(identifier,name,role,password_hash,register_no,department,semester) VALUES(?,?,?,?,?,?,?)",("student@srm.edu","Vatsan Kumar","student",hash_password("Student@123"),"RA2311003010001","Computer Science","Semester 1"))
             c.execute("INSERT INTO users(identifier,name,role,password_hash) VALUES(?,?,?,?)",("manager@srm.edu","Mess Manager","manager",hash_password("Manager@123")))
+        if c.execute("SELECT COUNT(*) n FROM menu_items").fetchone()["n"] == 0:
+            today_menu_date=datetime.now(TZ).date()
+            for offset in range(7):
+                menu_date=(today_menu_date+timedelta(days=offset)).isoformat()
+                for meal_id, names in MENUS.items():
+                    for item_name in names:
+                        dtype='Non-Veg' if any(word in item_name.lower() for word in ['chicken']) else 'Veg'
+                        c.execute("INSERT INTO menu_items(menu_date,meal_id,name,description,dietary_type) VALUES(?,?,?,?,?)",(menu_date,meal_id,item_name,'Daily mess menu item',dtype))
         if c.execute("SELECT COUNT(*) n FROM complaints").fetchone()["n"] == 0:
             today=datetime.now(TZ).date().isoformat(); now=datetime.now(TZ)
             seed=[("lunch","Food Quality","Chicken curry was too salty","The curry was very salty and difficult to eat."),("lunch","Food Temperature","Lunch was served cold","The rice and curry were cold when served."),("lunch","Food Temperature","Food was cold","Rice was not warm enough."),("lunch","Food Quality","Too much salt in curry","The curry tasted excessively salty."),("dinner","Taste","Chapati was hard","The chapati was hard and dry.")]
@@ -66,6 +75,7 @@ class FeedbackBody(BaseModel): meal_id: str; service_date: str; rating: int = Fi
 class ComplaintBody(BaseModel): meal_id: str; service_date: str; category: str; title: str; description: str
 class ResponseBody(BaseModel): response: str
 class ThemeBody(BaseModel): theme: str
+class MenuItemBody(BaseModel): menu_date: str; meal_id: str; name: str = Field(min_length=1,max_length=120); description: str = ''; dietary_type: str = 'Veg'; id: Optional[int] = None
 
 def current_user(authorization: Optional[str] = Header(default=None)):
     if not authorization or not authorization.lower().startswith("bearer "): raise HTTPException(401,"Please sign in to continue")
@@ -92,6 +102,11 @@ def meal_by_id(meal_id):
     m=next((x for x in MEALS if x["id"]==meal_id),None)
     if not m: raise HTTPException(400,"Unknown meal")
     return m
+
+def menu_names_for_date(menu_date, meal_id):
+    with connect() as c:
+        rows=c.execute("SELECT name FROM menu_items WHERE menu_date=? AND meal_id=? ORDER BY id",(menu_date,meal_id)).fetchall()
+    return [row["name"] for row in rows] or MENUS.get(meal_id, [])
 
 def ensure_window(meal_id):
     meal=meal_by_id(meal_id); hm=datetime.now(TZ).strftime("%H:%M")
@@ -177,13 +192,13 @@ def set_theme(body: ThemeBody,user=Depends(current_user)):
 @app.get("/api/menu/today")
 def today_menu(user=Depends(current_user)):
     now=datetime.now(TZ); active=active_meal(now)
-    meals=[{**m,"items":MENUS[m["id"]],"status":"open" if active and active["id"]==m["id"] else ("upcoming" if now.strftime("%H:%M")<m["start"] else "closed")} for m in MEALS]
+    meals=[{**m,"items":menu_names_for_date(now.date().isoformat(),m["id"]),"status":"open" if active and active["id"]==m["id"] else ("upcoming" if now.strftime("%H:%M")<m["start"] else "closed")} for m in MEALS]
     return {"date":now.date().isoformat(),"date_label":now.strftime("%a, %d %b %Y"),"active_meal":active["id"] if active else None,"meals":meals}
 
 @app.get("/api/menu/complete")
 def complete_menu(user=Depends(current_user)):
     today=datetime.now(TZ).date()
-    return {"days":[{"date":(today+timedelta(days=i)).isoformat(),"label":(today+timedelta(days=i)).strftime("%A, %d %b"),"meals":[{**m,"items":MENUS[m["id"]]} for m in MEALS]} for i in range(7)]}
+    return {"days":[{"date":(today+timedelta(days=i)).isoformat(),"label":(today+timedelta(days=i)).strftime("%A, %d %b"),"meals":[{**m,"items":menu_names_for_date((today+timedelta(days=i)).isoformat(),m["id"])} for m in MEALS]} for i in range(7)]}
 
 @app.get("/api/feedback/mine")
 def my_feedback(user=Depends(require_role("student"))):
@@ -210,6 +225,61 @@ def submit_complaint(body: ComplaintBody,user=Depends(require_role("student"))):
         cur=c.execute("INSERT INTO complaints(user_id,meal_id,service_date,category,title,description,created_at) VALUES(?,?,?,?,?,?,?)",(user["id"],body.meal_id,service_date,body.category[:80],body.title.strip()[:120],body.description.strip()[:1500],now.isoformat())); c.commit(); cid=cur.lastrowid
     rebuild_groups(body.meal_id,service_date)
     return {"ok":True,"id":cid,"message":"Your complaint has been submitted privately."}
+
+@app.get("/api/manager/menu")
+def manager_menu(menu_date: str, user=Depends(require_role("manager"))):
+    try: date.fromisoformat(menu_date)
+    except ValueError: raise HTTPException(400,"Use YYYY-MM-DD for the menu date")
+    with connect() as c:
+        rows=c.execute("SELECT * FROM menu_items WHERE menu_date=? ORDER BY CASE meal_id WHEN 'breakfast' THEN 1 WHEN 'lunch' THEN 2 WHEN 'snacks' THEN 3 ELSE 4 END, id",(menu_date,)).fetchall()
+        if not rows:
+            for meal_id, names in MENUS.items():
+                for item_name in names:
+                    dtype='Non-Veg' if 'chicken' in item_name.lower() else 'Veg'
+                    c.execute("INSERT INTO menu_items(menu_date,meal_id,name,description,dietary_type) VALUES(?,?,?,?,?)",(menu_date,meal_id,item_name,'Daily mess menu item',dtype))
+            c.commit()
+            rows=c.execute("SELECT * FROM menu_items WHERE menu_date=? ORDER BY CASE meal_id WHEN 'breakfast' THEN 1 WHEN 'lunch' THEN 2 WHEN 'snacks' THEN 3 ELSE 4 END, id",(menu_date,)).fetchall()
+    return {"date":menu_date,"items":[dict(r) for r in rows]}
+
+@app.post("/api/manager/menu")
+def save_manager_menu(body: MenuItemBody, user=Depends(require_role("manager"))):
+    try: date.fromisoformat(body.menu_date)
+    except ValueError: raise HTTPException(400,"Use YYYY-MM-DD for the menu date")
+    meal_by_id(body.meal_id)
+    if body.dietary_type not in ("Veg","Non-Veg","Vegan"): raise HTTPException(400,"Invalid food type")
+    name=body.name.strip()
+    if not name: raise HTTPException(422,"Item name is required")
+    with connect() as c:
+        if body.id:
+            exists=c.execute("SELECT id FROM menu_items WHERE id=?",(body.id,)).fetchone()
+            if not exists: raise HTTPException(404,"Menu item not found")
+            c.execute("UPDATE menu_items SET menu_date=?,meal_id=?,name=?,description=?,dietary_type=? WHERE id=?",(body.menu_date,body.meal_id,name,body.description[:250],body.dietary_type,body.id)); item_id=body.id
+        else:
+            cur=c.execute("INSERT INTO menu_items(menu_date,meal_id,name,description,dietary_type) VALUES(?,?,?,?,?)",(body.menu_date,body.meal_id,name,body.description[:250],body.dietary_type)); item_id=cur.lastrowid
+        c.commit(); row=c.execute("SELECT * FROM menu_items WHERE id=?",(item_id,)).fetchone()
+    return dict(row)
+
+@app.delete("/api/manager/menu/{item_id}")
+def delete_manager_menu(item_id: int, user=Depends(require_role("manager"))):
+    with connect() as c:
+        cur=c.execute("DELETE FROM menu_items WHERE id=?",(item_id,)); c.commit()
+    if cur.rowcount==0: raise HTTPException(404,"Menu item not found")
+    return {"ok":True}
+
+@app.get("/api/manager/feedback")
+def manager_feedback(user=Depends(require_role("manager"))):
+    # Return anonymised aggregate issue groups and meal ratings; never expose individual identifiers or raw complaint text.
+    with connect() as c:
+        groups=c.execute("SELECT * FROM issue_groups ORDER BY service_date DESC, count DESC").fetchall()
+        ratings=c.execute("SELECT meal_id,service_date,AVG(rating) average,COUNT(*) count,category FROM feedback GROUP BY meal_id,service_date,category ORDER BY service_date DESC").fetchall()
+        total_complaints=c.execute("SELECT COUNT(*) n FROM complaints").fetchone()["n"]
+        total_ratings=c.execute("SELECT COUNT(*) n FROM feedback").fetchone()["n"]
+    items=[]
+    for row in groups:
+        d=dict(row); d.update({"type":"Complaint","category":"Grouped issue","title":d["title"],"summary":d["summary"]}); items.append(d)
+    for row in ratings:
+        d=dict(row); items.append({"id":f"rating-{d['meal_id']}-{d['service_date']}-{len(items)}","type":"Rating","meal_id":d["meal_id"],"service_date":d["service_date"],"category":d["category"] or "Meal rating","title":f"Average rating {round(d['average'],1)}/5","summary":"Aggregated meal-rating responses for this meal and category; individual comments are not shown.","rating":round(d["average"],1),"count":d["count"],"status":"Recorded"})
+    return {"counts":{"all":len(items),"complaints":len(groups),"ratings":len(ratings),"total_complaints":total_complaints,"total_ratings":total_ratings},"items":items}
 
 @app.get("/api/manager/overview")
 def manager_overview(user=Depends(require_role("manager"))):
