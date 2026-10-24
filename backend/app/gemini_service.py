@@ -11,6 +11,11 @@ import re
 import threading
 from datetime import datetime, timedelta, date
 from typing import List, Dict, Any, Optional
+from dotenv import load_dotenv
+
+# Ensure environment variables are loaded
+_base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(_base_dir, ".env"))
 
 try:
     from google import genai
@@ -24,7 +29,7 @@ _is_analyzing = False
 
 def get_gemini_config():
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
-    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+    model = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest").strip()
     return api_key, model
 
 def is_ai_enabled() -> bool:
@@ -99,24 +104,28 @@ def call_gemini_grouping(complaints: List[Dict[str, Any]]) -> Optional[List[Dict
         f"Input complaints:\n{json.dumps(payload_data)}"
     )
 
-    try:
-        response = client.models.generate_content(
-            model=model_name,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.2,
-                max_output_tokens=1000,
-            ),
-        )
-        text = response.text or ""
-        match = re.search(r"\[.*\]", text, re.DOTALL)
-        if match:
-            parsed = json.loads(match.group(0))
-            if isinstance(parsed, list) and len(parsed) > 0:
-                return parsed
-    except Exception as e:
-        # Graceful fallback - never fail student requests or crash application
-        print(f"[GeminiService] AI grouping skipped/failed: {e}")
+    models_to_try = [model_name] + [m for m in ["gemini-flash-lite-latest", "gemini-3.5-flash-lite"] if m != model_name]
+    for candidate in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=candidate,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    max_output_tokens=1000,
+                ),
+            )
+            text = response.text or ""
+            match = re.search(r"\[.*\]", text, re.DOTALL)
+            if match:
+                parsed = json.loads(match.group(0))
+                if isinstance(parsed, list) and len(parsed) > 0:
+                    print(f"[GeminiService] Successfully clustered {len(complaints)} complaints using {candidate}")
+                    return parsed
+        except Exception as e:
+            # Try next candidate model
+            print(f"[GeminiService] AI grouping attempt with {candidate} failed: {e}")
+            continue
     return None
 
 def process_pending_complaints_job(connect_fn, meal_info_dict, tz):
