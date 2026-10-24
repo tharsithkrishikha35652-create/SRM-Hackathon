@@ -3,13 +3,14 @@ Gemini AI Analysis Service for MessMate
 Uses Google's `google-genai` SDK with fast Gemini Flash models.
 Ensures zero latency impact on student actions by running strictly in background tasks.
 Provides robust fallback to deterministic rule-based analysis if API is absent or unavailable.
+Integrates directly with the MessMate Risk-Score Engine.
 """
 
 import os
 import json
 import re
 import threading
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 
@@ -22,6 +23,12 @@ try:
     from google.genai import types
 except ImportError:
     genai = None
+
+from app.risk_engine import (
+    get_calendar_week_key,
+    reconcile_issue_risk,
+    calculate_risk_score
+)
 
 # Thread-safe lock to prevent duplicate concurrent AI analysis runs
 _analysis_lock = threading.Lock()
@@ -48,19 +55,24 @@ def get_ai_status(pending_count: int = 0) -> Dict[str, Any]:
 
 def normalise_rule_based(text: str):
     t = text.lower()
-    if any(w in t for w in ["cold", "not warm", "temperature"]):
-        return "food_temperature", "Food was served cold", "Several students reported that the meal was not served at a suitable temperature."
+    is_safety = any(w in t for w in ["poison", "cockroach", "glass", "insect", "worm", "bug", "rotten", "vomit", "hospital", "dead", "contamination"])
+    if any(w in t for w in ["cold", "not warm", "temperature", "chilled", "lukewarm"]):
+        return "food_temperature", "Food temperature", "Food was served cold", "Several students reported that the meal was not served at a suitable temperature.", 0.85, is_safety
     if any(w in t for w in ["salt", "salty"]):
-        return "too_salty", "Food was too salty", "Feedback indicates that the seasoning may have been too strong."
-    if any(w in t for w in ["hard", "dry", "softness"]):
-        return "texture", "Food texture needs attention", "Students reported concerns about the texture or softness of the food."
-    if any(w in t for w in ["hygiene", "clean", "hair", "unclean", "fly", "insect"]):
-        return "hygiene", "Hygiene concern", "A hygiene-related concern was submitted and should be reviewed promptly."
-    if any(w in t for w in ["quantity", "portion", "less food"]):
-        return "portion_size", "Portion size concern", "Feedback suggests that serving quantity may need review."
+        return "too_salty", "Food taste", "Food was too salty", "Feedback indicates that seasoning or salt level was excessively strong.", 0.85, is_safety
+    if any(w in t for w in ["hard", "dry", "softness", "chewy", "burnt"]):
+        return "texture", "Food quality", "Food texture needs attention", "Students reported concerns about the texture or softness of the food.", 0.80, is_safety
+    if any(w in t for w in ["hygiene", "clean", "hair", "unclean", "fly", "insect", "cockroach", "spoon", "plate"]):
+        return "hygiene", "Hygiene and cleanliness", "Hygiene and cleanliness concern", "A hygiene concern was submitted regarding cleanliness of utensils, food, or dining hall.", 0.90, is_safety
+    if any(w in t for w in ["quantity", "portion", "less food", "ran out", "insufficient", "empty"]):
+        return "portion_size", "Food quantity", "Insufficient food quantity", "Feedback suggests that serving quantity was insufficient or food ran out.", 0.85, is_safety
+    if any(w in t for w in ["veg", "non-veg", "chicken in veg", "meat in veg"]):
+        return "veg_mismatch", "Vegetarian/non-vegetarian menu mismatch", "Vegetarian / Non-Vegetarian mismatch", "A concern was raised regarding separation or labeling of vegetarian and non-vegetarian food.", 0.90, is_safety
+    if any(w in t for w in ["late", "wait", "queue", "slow", "delay"]):
+        return "service_time", "Service and waiting time", "Service and waiting time issue", "Students experienced delays or long lines during meal service.", 0.85, is_safety
     slug = re.sub(r"[^a-z0-9]+", "_", t).strip("_")[:48] or "general_feedback"
-    title = (text.strip().capitalize()[:72] or "General food feedback")
-    return slug, title, "A recurring student concern was reported. Review the submitted feedback pattern and decide on an appropriate action."
+    title = (text.strip().capitalize()[:70] or "General food quality feedback")
+    return slug, "Food quality", title, "A recurring student concern was reported. Review the submitted feedback pattern and decide on an appropriate action.", 0.75, is_safety
 
 def call_gemini_grouping(complaints: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
     """
@@ -73,7 +85,7 @@ def call_gemini_grouping(complaints: List[Dict[str, Any]]) -> Optional[List[Dict
 
     client = genai.Client(api_key=api_key)
     
-    # Strip any potential PII - send only id, category, title, description
+    # Strip any potential PII - send only id, meal_id, category, title, description
     payload_data = [
         {
             "id": c["id"],
@@ -92,12 +104,17 @@ def call_gemini_grouping(complaints: List[Dict[str, Any]]) -> Optional[List[Dict
         "1. Do not invent facts, complaints, or counts.\n"
         "2. Only assign valid complaint IDs from the input list to complaint_ids.\n"
         "3. Keep student identities anonymous; focus purely on the food/service problem.\n"
-        "4. Return a JSON array of grouped issues matching this schema:\n"
+        "4. Assign a normalized category from: ['Food quality', 'Food taste', 'Food temperature', 'Food quantity', 'Hygiene and cleanliness', 'Menu mismatch', 'Service and waiting time', 'Vegetarian/non-vegetarian menu mismatch', 'Other', 'Unclear'].\n"
+        "5. Set is_food_safety_hazard: true ONLY IF an urgent food safety hazard is reported (e.g. food poisoning, foreign objects like glass/metal/stones, insects/pests, spoiled/decayed food).\n"
+        "6. Return a JSON array of grouped issues matching this schema:\n"
         "[\n"
         "  {\n"
         "    \"issue_key\": \"short_snake_case_key\",\n"
+        "    \"category\": \"Food temperature\",\n"
         "    \"title\": \"Clear concise issue title (max 70 chars)\",\n"
         "    \"summary\": \"One to two sentence summary of the aggregated problem (max 200 chars)\",\n"
+        "    \"confidence\": 0.95,\n"
+        "    \"is_food_safety_hazard\": false,\n"
         "    \"complaint_ids\": [1, 2]\n"
         "  }\n"
         "]\n\n"
@@ -123,7 +140,6 @@ def call_gemini_grouping(complaints: List[Dict[str, Any]]) -> Optional[List[Dict
                     print(f"[GeminiService] Successfully clustered {len(complaints)} complaints using {candidate}")
                     return parsed
         except Exception as e:
-            # Try next candidate model
             print(f"[GeminiService] AI grouping attempt with {candidate} failed: {e}")
             continue
     return None
@@ -132,18 +148,17 @@ def process_pending_complaints_job(connect_fn, meal_info_dict, tz):
     """
     Background job triggered on new complaint submission or on demand.
     Ensures non-blocking execution, idempotent operations, and deterministic fallback.
+    Updates risk scores, weekly recurrence records, and response cycles.
     """
     global _is_analyzing
     if not _analysis_lock.acquire(blocking=False):
-        # Job already running in background, avoid duplicate concurrent runs
         return
 
     _is_analyzing = True
     try:
         with connect_fn() as c:
-            # Fetch unanalyzed or recent complaints
             unprocessed = c.execute(
-                "SELECT id, meal_id, service_date, category, title, description FROM complaints WHERE processed_for_ai=0 ORDER BY id ASC LIMIT 50"
+                "SELECT id, meal_id, service_date, category, title, description, created_at FROM complaints WHERE processed_for_ai=0 ORDER BY id ASC LIMIT 50"
             ).fetchall()
             
             if not unprocessed:
@@ -151,71 +166,158 @@ def process_pending_complaints_job(connect_fn, meal_info_dict, tz):
 
             complaints_list = [dict(row) for row in unprocessed]
             
-            # Group complaints by (meal_id, service_date) for coherent analysis
             by_period = {}
             for comp in complaints_list:
                 key = (comp["meal_id"], comp["service_date"])
                 by_period.setdefault(key, []).append(comp)
 
+            now_iso = datetime.now(tz).isoformat()
+
             for (meal_id, service_date), comp_batch in by_period.items():
                 gemini_result = call_gemini_grouping(comp_batch) if is_ai_enabled() else None
                 
                 if gemini_result:
-                    # Apply Gemini grouping
                     for g in gemini_result:
-                        key = g.get("issue_key", "general_issue")[:48]
+                        key = str(g.get("issue_key", "general_issue"))[:48]
+                        cat = str(g.get("category", "Food quality"))[:50]
                         title = str(g.get("title", "Food Feedback"))[:100]
                         summary = str(g.get("summary", ""))[:300]
+                        conf = float(g.get("confidence", 0.9))
+                        is_hazard = 1 if g.get("is_food_safety_hazard") else 0
+
+                        # Filter strictly to valid complaint IDs from this batch
                         c_ids = [cid for cid in g.get("complaint_ids", []) if any(x["id"] == cid for x in comp_batch)]
                         if not c_ids:
                             continue
                         
                         existing = c.execute(
-                            "SELECT id, count FROM issue_groups WHERE meal_id=? AND service_date=? AND issue_key=?",
-                            (meal_id, service_date, key)
+                            "SELECT id, count, status FROM issue_groups WHERE meal_id=? AND issue_key=?",
+                            (meal_id, key)
                         ).fetchone()
                         
                         m_end = meal_info_dict.get(meal_id, {}).get("end", "22:00")
                         deadline = datetime.combine(date.fromisoformat(service_date), datetime.strptime(m_end, "%H:%M").time(), tz) + timedelta(hours=24)
-                        
+                        deadline_iso = deadline.isoformat()
+
+                        try:
+                            s_dt = datetime.fromisoformat(service_date)
+                            w_key = get_calendar_week_key(s_dt)
+                        except Exception:
+                            w_key = get_calendar_week_key(datetime.now(tz))
+
                         if existing:
                             gid = existing["id"]
                             c.execute(
-                                "UPDATE issue_groups SET count=count+?, title=?, summary=?, deadline=? WHERE id=?",
-                                (len(c_ids), title, summary, deadline.isoformat(), gid)
+                                """UPDATE issue_groups 
+                                   SET count=count+?, title=?, summary=?, category=?, confidence=?, 
+                                       is_food_safety_hazard=MAX(is_food_safety_hazard, ?),
+                                       last_reported_at=?
+                                   WHERE id=?""",
+                                (len(c_ids), title, summary, cat, conf, is_hazard, now_iso, gid)
                             )
+                            # If previously resolved/responded, open a new response cycle
+                            if existing["status"] in ("Responded", "Resolved"):
+                                max_cycle = c.execute("SELECT COALESCE(MAX(cycle_number), 1) as m FROM response_cycles WHERE group_id=?", (gid,)).fetchone()["m"]
+                                c.execute(
+                                    """INSERT OR IGNORE INTO response_cycles(group_id, cycle_number, started_at, deadline, status)
+                                       VALUES(?,?,?,?, 'Open')""",
+                                    (gid, max_cycle + 1, now_iso, deadline_iso)
+                                )
+                                c.execute("UPDATE issue_groups SET status='Reopened', deadline=? WHERE id=?", (deadline_iso, gid))
                         else:
                             cur = c.execute(
-                                "INSERT INTO issue_groups(meal_id,service_date,issue_key,title,summary,count,deadline) VALUES(?,?,?,?,?,?,?)",
-                                (meal_id, service_date, key, title, summary, len(c_ids), deadline.isoformat())
+                                """INSERT INTO issue_groups(
+                                       meal_id, service_date, issue_key, category, title, summary, count, 
+                                       confidence, is_food_safety_hazard, first_reported_at, last_reported_at, deadline, status
+                                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?, 'Open')""",
+                                (meal_id, service_date, key, cat, title, summary, len(c_ids), conf, is_hazard, now_iso, now_iso, deadline_iso)
                             )
                             gid = cur.lastrowid
+                            c.execute(
+                                """INSERT OR IGNORE INTO response_cycles(group_id, cycle_number, started_at, deadline, status)
+                                   VALUES(?, 1, ?, ?, 'Open')""",
+                                (gid, now_iso, deadline_iso)
+                            )
                         
+                        # Record week recurrence record (deduplicated!)
+                        c.execute(
+                            "INSERT OR IGNORE INTO issue_week_records(group_id, week_key, first_seen_at) VALUES(?,?,?)",
+                            (gid, w_key, now_iso)
+                        )
+
                         for cid in c_ids:
                             c.execute("INSERT OR REPLACE INTO complaint_group_links(complaint_id,group_id) VALUES(?,?)", (cid, gid))
                             c.execute("UPDATE complaints SET processed_for_ai=1 WHERE id=?", (cid,))
+                        
+                        # Reconcile risk score for this issue group immediately
+                        reconcile_issue_risk(c, gid)
                 else:
-                    # Fallback to deterministic rule-based grouping
+                    # Deterministic rule-based fallback
                     for comp in comp_batch:
-                        key, title, summary = normalise_rule_based(comp["category"] + " " + comp["title"] + " " + comp["description"])
+                        key, cat, title, summary, conf, is_hazard = normalise_rule_based(comp["category"] + " " + comp["title"] + " " + comp["description"])
                         existing = c.execute(
-                            "SELECT id FROM issue_groups WHERE meal_id=? AND service_date=? AND issue_key=?",
-                            (meal_id, service_date, key)
+                            "SELECT id, status FROM issue_groups WHERE meal_id=? AND issue_key=?",
+                            (meal_id, key)
                         ).fetchone()
                         m_end = meal_info_dict.get(meal_id, {}).get("end", "22:00")
                         deadline = datetime.combine(date.fromisoformat(service_date), datetime.strptime(m_end, "%H:%M").time(), tz) + timedelta(hours=24)
-                        
+                        deadline_iso = deadline.isoformat()
+
+                        try:
+                            s_dt = datetime.fromisoformat(service_date)
+                            w_key = get_calendar_week_key(s_dt)
+                        except Exception:
+                            w_key = get_calendar_week_key(datetime.now(tz))
+
+                        is_hazard_int = 1 if is_hazard else 0
+
                         if existing:
                             gid = existing["id"]
-                            c.execute("UPDATE issue_groups SET count=count+1, deadline=? WHERE id=?", (deadline.isoformat(), gid))
+                            c.execute(
+                                """UPDATE issue_groups 
+                                   SET count=count+1, category=?, confidence=?, 
+                                       is_food_safety_hazard=MAX(is_food_safety_hazard, ?),
+                                       last_reported_at=?
+                                   WHERE id=?""",
+                                (cat, conf, is_hazard_int, now_iso, gid)
+                            )
+                            if existing["status"] in ("Responded", "Resolved"):
+                                max_cycle = c.execute("SELECT COALESCE(MAX(cycle_number), 1) as m FROM response_cycles WHERE group_id=?", (gid,)).fetchone()["m"]
+                                c.execute(
+                                    """INSERT OR IGNORE INTO response_cycles(group_id, cycle_number, started_at, deadline, status)
+                                       VALUES(?,?,?,?, 'Open')""",
+                                    (gid, max_cycle + 1, now_iso, deadline_iso)
+                                )
+                                c.execute("UPDATE issue_groups SET status='Reopened', deadline=? WHERE id=?", (deadline_iso, gid))
                         else:
                             cur = c.execute(
-                                "INSERT INTO issue_groups(meal_id,service_date,issue_key,title,summary,count,deadline) VALUES(?,?,?,?,?,?,?)",
-                                (meal_id, service_date, key, title, summary, 1, deadline.isoformat())
+                                """INSERT INTO issue_groups(
+                                       meal_id, service_date, issue_key, category, title, summary, count, 
+                                       confidence, is_food_safety_hazard, first_reported_at, last_reported_at, deadline, status
+                                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?, 'Open')""",
+                                (meal_id, service_date, key, cat, title, summary, 1, conf, is_hazard_int, now_iso, now_iso, deadline_iso)
                             )
                             gid = cur.lastrowid
+                            c.execute(
+                                """INSERT OR IGNORE INTO response_cycles(group_id, cycle_number, started_at, deadline, status)
+                                   VALUES(?, 1, ?, ?, 'Open')""",
+                                (gid, now_iso, deadline_iso)
+                            )
+
+                        c.execute(
+                            "INSERT OR IGNORE INTO issue_week_records(group_id, week_key, first_seen_at) VALUES(?,?,?)",
+                            (gid, w_key, now_iso)
+                        )
                         c.execute("INSERT OR REPLACE INTO complaint_group_links(complaint_id,group_id) VALUES(?,?)", (comp["id"], gid))
                         c.execute("UPDATE complaints SET processed_for_ai=1 WHERE id=?", (comp["id"],))
+                        reconcile_issue_risk(c, gid)
+
+            # Record AI processing job
+            c.execute(
+                """INSERT INTO ai_processing_jobs(batch_size, status, model, provider, created_at)
+                   VALUES(?,?,?,?,?)""",
+                (len(complaints_list), "completed", get_gemini_config()[1], "google-genai" if is_ai_enabled() else "rule-based", now_iso)
+            )
             c.commit()
     except Exception as e:
         print(f"[GeminiService] Error during background job: {e}")
