@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, BookOpen, CalendarDays, RefreshCw, ShieldCheck } from 'lucide-react';
 
-const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
+const API = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' ? '/api' : 'http://127.0.0.1:8000/api');
 const DIETARY_OPTIONS = [
   { id: 'veg', label: 'Vegetarian' },
   { id: 'non_veg', label: 'Non-Vegetarian' },

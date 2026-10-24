@@ -43,7 +43,7 @@ const meals = {
 };
 
 const mealOrder = ['breakfast', 'lunch', 'snacks', 'dinner'];
-const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
+const API = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' ? '/api' : 'http://127.0.0.1:8000/api');
 const foodPhotos = {
   dosa: 'https://images.unsplash.com/photo-1668236543090-82eba5ee5976?auto=format&fit=crop&w=900&q=85',
   idli: 'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=900&q=85',

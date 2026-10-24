@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import WeeklyCompleteMenu from './CompleteMenu.jsx';
 import { Utensils, Sun, Moon, Home, BookOpen, MessageSquare, UserRound, ChevronRight, ChevronLeft, Eye, EyeOff, Mail, LockKeyhole, GraduationCap, Bell, CalendarDays, Clock3, Star, Soup, Coffee, Salad, Flame, Search, Send, Check, AlertCircle, LogOut, ShieldCheck, Sparkles, ClipboardList, CircleCheck, Filter, X, RefreshCw, ArrowUpRight, Menu as MenuIcon } from 'lucide-react';
 
-const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
+const API = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' ? '/api' : 'http://127.0.0.1:8000/api');
 const APP_ROLE = import.meta.env.VITE_APP_ROLE || 'both';
 const mealInfo = {
  breakfast:{name:'Breakfast',time:'7:00 AM – 11:00 AM',icon:Coffee,items:['Idli','Sambar','Coconut chutney','Pongal','Tea'],color:'peach',image:'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=700&q=85'},

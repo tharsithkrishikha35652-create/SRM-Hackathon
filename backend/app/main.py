@@ -31,16 +31,27 @@ from app.gemini_service import (
     normalise_rule_based
 )
 
-DB_PATH = os.path.join(BASE_DIR, "messmate.db")
+# Handle SQLite on Vercel Serverless (where repository filesystem is read-only)
+if os.environ.get("VERCEL"):
+    import shutil
+    TMP_DB = "/tmp/messmate.db"
+    SEED_DB = os.path.join(BASE_DIR, "seed.db")
+    if not os.path.exists(SEED_DB):
+        SEED_DB = os.path.join(BASE_DIR, "messmate.db")
+    if not os.path.exists(TMP_DB) and os.path.exists(SEED_DB):
+        try:
+            shutil.copy2(SEED_DB, TMP_DB)
+        except Exception as e:
+            print(f"Warning: could not copy seed db: {e}")
+    DB_PATH = TMP_DB if os.path.exists(TMP_DB) else SEED_DB
+else:
+    DB_PATH = os.path.join(BASE_DIR, "messmate.db")
 TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Kolkata"))
 
 app = FastAPI(title="MessMate API", version="2.5.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173", "http://127.0.0.1:5173",
-        "http://localhost:5174", "http://127.0.0.1:5174"
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
