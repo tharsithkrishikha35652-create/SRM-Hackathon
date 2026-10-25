@@ -2,6 +2,7 @@
   "name": "messmate",
   "private": true,
   "version": "1.0.0",
+  "type": "module",
   "workspaces": [
     "student-app",
     "manager-web"
@@ -13,6 +14,7 @@
     "dev:manager": "npm run dev --workspace messmate-manager-web",
     "build": "npm run build --workspaces",
     "build:student": "npm run build --workspace messmate-student-app",
-    "build:manager": "npm run build --workspace messmate-manager-web"
+    "build:manager": "npm run build --workspace messmate-manager-web",
+    "build:unified": "node scripts/build-unified.js"
   }
 }

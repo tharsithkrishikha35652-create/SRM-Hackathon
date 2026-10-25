@@ -1,9 +1,21 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "npm install",
-  "buildCommand": "npm run build:student",
-  "outputDirectory": "student-app/dist",
+  "buildCommand": "npm run build:unified",
+  "outputDirectory": "dist",
   "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/manager/(.*)",
+      "destination": "/manager/index.html"
+    },
+    {
+      "source": "/manager",
+      "destination": "/manager/index.html"
+    },
     {
       "source": "/(.*)",
       "destination": "/index.html"

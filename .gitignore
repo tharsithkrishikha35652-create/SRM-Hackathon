@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 *.db
 *.sqlite3
+!backend/seed.db
 backend/.venv/
 .venv/
 env/
@@ -26,3 +27,5 @@ Thumbs.db
 .env
 *.env
 !.env.example
+
+.vercel
