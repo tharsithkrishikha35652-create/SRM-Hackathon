@@ -28,7 +28,8 @@ from app.risk_engine import (
 from app.gemini_service import (
     process_pending_complaints_job,
     get_ai_status,
-    normalise_rule_based
+    normalise_rule_based,
+    generate_meal_summary
 )
 
 # Handle SQLite on Vercel Serverless (where repository filesystem is read-only)
@@ -358,10 +359,124 @@ def init_db():
                 ("manager@srm.edu", "Mess Manager", "manager", hash_password("Manager@123"))
             )
 
-        c.execute(
-            "INSERT OR IGNORE INTO users(identifier,name,role,password_hash,department,semester,dietary_preference) VALUES(?,?,?,?,?,?,?)",
-            ("demo.student@srm.edu", "Demo Student", "student", hash_password("DemoStudent@123"), "Computer Science", "Semester 1", "non_veg")
-        )
+        # Seed 100 database-only demo student accounts. Passwords are random,
+        # stored only as hashes, and are not exposed by the application.
+        for student_number in range(1, 101):
+            identifier = "demo.student@srm.edu" if student_number == 1 else f"demo.student.{student_number:03d}@srm.edu"
+            exists = c.execute("SELECT 1 FROM users WHERE identifier=?", (identifier,)).fetchone()
+            if not exists:
+                c.execute(
+                    """INSERT INTO users(identifier,name,role,password_hash,department,semester,dietary_preference)
+                       VALUES(?,?,?,?,?,?,?)""",
+                    (identifier, f"Demo Student {student_number:03d}", "student", hash_password(secrets.token_urlsafe(32)), "Computer Science", "Semester 1", "non_veg")
+                )
+
+        demo_students = c.execute(
+            """SELECT id FROM users
+               WHERE identifier=? OR identifier LIKE 'demo.student.___@srm.edu'
+               ORDER BY CASE WHEN identifier='demo.student@srm.edu' THEN 0 ELSE 1 END, identifier""",
+            ("demo.student@srm.edu",)
+        ).fetchall()
+        seed_date = datetime.now(TZ).date().isoformat()
+        seed_now = datetime.now(TZ).isoformat()
+        demo_feedback = {
+            "breakfast": (
+                "Demo feedback: Breakfast too salty",
+                "Food taste",
+                "Breakfast was too salty; the salt level was noticeably high and should be reduced.",
+                "We are reviewing the breakfast recipe and will reduce the salt level in the next batch."
+            ),
+            "lunch": (
+                "Demo feedback: Lunch served at low temperature",
+                "Food temperature",
+                "Lunch was served at a low temperature and should be kept warmer during service.",
+                "The lunch team will check holding temperatures and serve the meal warmer."
+            ),
+            "snacks": (
+                "Demo feedback: Snacks quantity too low",
+                "Food quantity",
+                "The snacks quantity was too low, and the serving ran short before everyone was served.",
+                "We will increase the snack quantity and monitor replenishment during service."
+            ),
+            "dinner": (
+                "Demo feedback: Dinner needs more spice",
+                "Food taste",
+                "Dinner had less spice than expected; please increase the spice level slightly.",
+                "The dinner team will adjust the spice level while keeping the recipe balanced."
+            )
+        }
+        if demo_students:
+            for meal in MEALS:
+                title, category, description, response = demo_feedback[meal["id"]]
+                deadline = datetime.combine(
+                    date.fromisoformat(seed_date),
+                    datetime.strptime(meal["end"], "%H:%M").time(),
+                    TZ
+                ) + timedelta(hours=24)
+                issue_key = f"demo_seed_{meal['id']}_v1"
+                c.execute(
+                    """INSERT OR IGNORE INTO issue_groups(
+                           meal_id,service_date,issue_key,title,summary,count,status,response,
+                           responded_at,deadline,category,first_reported_at,last_reported_at
+                       ) VALUES(?,?,?,?,?,0,'Responded',?,?,?,?,?,?)""",
+                    (meal["id"], seed_date, issue_key, title, description, response,
+                     seed_now, deadline.isoformat(), category, seed_now, seed_now)
+                )
+                group = c.execute(
+                    "SELECT id FROM issue_groups WHERE meal_id=? AND service_date=? AND issue_key=?",
+                    (meal["id"], seed_date, issue_key)
+                ).fetchone()
+                for student in demo_students:
+                    existing_rows = c.execute(
+                        """SELECT id FROM complaints WHERE user_id=? AND meal_id=? AND service_date=?
+                           AND title LIKE 'Demo feedback:%' ORDER BY id""",
+                        (student["id"], meal["id"], seed_date)
+                    ).fetchall()
+                    if existing_rows:
+                        complaint_id = existing_rows[0]["id"]
+                        c.execute(
+                            """UPDATE complaints SET category=?,title=?,description=?,status='Responded',
+                               processed_for_ai=1 WHERE id=?""",
+                            (category, title, description, complaint_id)
+                        )
+                        for duplicate in existing_rows[1:]:
+                            c.execute("DELETE FROM complaints WHERE id=?", (duplicate["id"],))
+                    else:
+                        cur = c.execute(
+                            """INSERT INTO complaints(
+                                   user_id,meal_id,service_date,category,title,description,status,
+                                   processed_for_ai,created_at
+                               ) VALUES(?,?,?,?,?,?,'Responded',1,?)""",
+                            (student["id"], meal["id"], seed_date, category, title, description, seed_now)
+                        )
+                        complaint_id = cur.lastrowid
+                    c.execute(
+                        "INSERT OR IGNORE INTO complaint_group_links(complaint_id,group_id) VALUES(?,?)",
+                        (complaint_id, group["id"])
+                    )
+                c.execute(
+                    """UPDATE issue_groups SET title=?,summary=?,count=(
+                           SELECT COUNT(*) FROM complaint_group_links WHERE group_id=?
+                       ),status='Responded',response=?,responded_at=?,deadline=?,category=? WHERE id=?""",
+                    (title, description, group["id"], response, seed_now, deadline.isoformat(), category, group["id"])
+                )
+                c.execute(
+                    """INSERT OR IGNORE INTO response_cycles(
+                           group_id,cycle_number,started_at,deadline,responded_at,response_text,status
+                       ) VALUES(?,1,?,?,?,?, 'Responded')""",
+                    (group["id"], seed_now, deadline.isoformat(), seed_now, response)
+                )
+                c.execute(
+                    """UPDATE response_cycles SET deadline=?,responded_at=?,response_text=?,status='Responded'
+                       WHERE group_id=? AND cycle_number=1""",
+                    (deadline.isoformat(), seed_now, response, group["id"])
+                )
+                week_key = get_calendar_week_key(datetime.fromisoformat(seed_date))
+                c.execute(
+                    "INSERT OR IGNORE INTO issue_week_records(group_id,week_key,first_seen_at) VALUES(?,?,?)",
+                    (group["id"], week_key, seed_now)
+                )
+                reconcile_issue_risk(c, group["id"])
 
         # Seed reviewer if missing
         if c.execute("SELECT COUNT(*) n FROM users WHERE identifier='reviewer@srm.edu'").fetchone()["n"] == 0:
@@ -1043,6 +1158,24 @@ def override_safety(issue_id: int, body: SafetyOverrideBody, user=Depends(requir
 def trigger_ai_analysis(background_tasks: BackgroundTasks, user=Depends(require_roles("manager", "reviewer"))):
     background_tasks.add_task(process_pending_complaints_job, connect, {m["id"]: m for m in MEALS}, TZ)
     return {"ok": True, "message": "AI analysis queued in background."}
+
+@app.get("/api/manager/ai/summary")
+def manager_meal_ai_summary(meal_id: str, user=Depends(require_roles("manager", "reviewer"))):
+    meal = meal_by_id(meal_id)
+    today = datetime.now(TZ).date().isoformat()
+    with connect() as c:
+        complaints = [dict(row) for row in c.execute(
+            """SELECT category,title,description,NULL AS rating FROM complaints
+               WHERE meal_id=? AND service_date=? ORDER BY id""",
+            (meal_id, today)
+        ).fetchall()]
+        ratings = [dict(row) for row in c.execute(
+            """SELECT category, 'Meal rating' AS title, comment AS description, rating FROM feedback
+               WHERE meal_id=? AND service_date=? ORDER BY id""",
+            (meal_id, today)
+        ).fetchall()]
+    result = generate_meal_summary(meal["name"], complaints + ratings)
+    return {**result, "meal_id": meal_id, "service_date": today, "count": len(complaints) + len(ratings)}
 
 @app.get("/api/manager/feedback")
 def manager_feedback(user=Depends(require_roles("manager", "reviewer"))):

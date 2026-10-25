@@ -10,6 +10,7 @@ import os
 import json
 import re
 import threading
+from collections import Counter
 from datetime import datetime, timedelta, date, timezone
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
@@ -143,6 +144,56 @@ def call_gemini_grouping(complaints: List[Dict[str, Any]]) -> Optional[List[Dict
             print(f"[GeminiService] AI grouping attempt with {candidate} failed: {e}")
             continue
     return None
+
+def generate_meal_summary(meal_name: str, feedback: List[Dict[str, Any]]) -> Dict[str, str]:
+    """Summarize one meal's anonymized feedback, with a data-based fallback."""
+    if not feedback:
+        return {"summary": f"No feedback has been recorded for {meal_name} today.", "provider": "rule-based"}
+
+    entries = [
+        {
+            "category": str(item.get("category") or "General"),
+            "title": str(item.get("title") or ""),
+            "feedback": str(item.get("description") or item.get("comment") or ""),
+            "rating": item.get("rating"),
+        }
+        for item in feedback
+    ]
+    categories = Counter(entry["category"] for entry in entries)
+    common_category, category_count = categories.most_common(1)[0]
+    examples = list(dict.fromkeys(
+        entry["feedback"] or entry["title"] for entry in entries if entry["feedback"] or entry["title"]
+    ))[:3]
+    fallback = (
+        f"{len(entries)} feedback item(s) were recorded for {meal_name} today. "
+        f"The most common theme is {common_category.lower()} ({category_count} report(s)). "
+        f"Students most often noted: {'; '.join(examples)}"
+    )
+
+    api_key, model_name = get_gemini_config()
+    if not api_key or genai is None:
+        return {"summary": fallback, "provider": "rule-based"}
+
+    try:
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=model_name,
+            contents=(
+                "Summarize the following anonymized campus meal feedback in 2 concise sentences. "
+                "Accurately report the dominant concern and count. Do not invent facts, "
+                "identify students, or include recommendations not supported by the feedback. "
+                f"Meal: {meal_name}. Total feedback items: {len(entries)}.\n"
+                f"Feedback: {json.dumps(entries[:100], ensure_ascii=False)}"
+            ),
+            config=types.GenerateContentConfig(temperature=0.2, max_output_tokens=220),
+        )
+        summary = (response.text or "").strip()
+        if summary:
+            return {"summary": summary, "provider": "google-genai"}
+    except Exception as e:
+        print(f"[GeminiService] Meal summary generation failed: {e}")
+
+    return {"summary": fallback, "provider": "rule-based"}
 
 def process_pending_complaints_job(connect_fn, meal_info_dict, tz):
     """

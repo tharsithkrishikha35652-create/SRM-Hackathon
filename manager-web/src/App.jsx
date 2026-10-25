@@ -20,9 +20,10 @@ const MEALS = [
 
 const NAV = [
   ['dashboard', 'Dashboard', LayoutDashboard],
+  ['today', "Today's Feedback", MessageSquare],
   ['escalations', 'Escalations', AlertOctagon],
   ['menu', 'Menu Management', CalendarDays],
-  ['feedback', 'Feedback & Complaints', MessageSquare],
+  ['feedback', 'Feedback History', MessageSquare],
   ['insights', 'AI Insights', BrainCircuit],
   ['responses', 'Responses', ClipboardCheck],
   ['reports', 'Reports', BarChart3],
@@ -788,6 +789,10 @@ function App({ embeddedSession, onEmbeddedLogout } = {}) {
     }
   }
 
+  async function summarizeMeal(mealId) {
+    return api(`/manager/ai/summary?meal_id=${encodeURIComponent(mealId)}`, token);
+  }
+
   async function login(identifier, password) {
     setBusy(true);
     setLoginError('');
@@ -836,6 +841,29 @@ function App({ embeddedSession, onEmbeddedLogout } = {}) {
       setModal(null);
       setResponseText('');
       setToast('Manager response saved and delay timer stopped.');
+      await loadOverview(false);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function saveMealResponse(mealId, value) {
+    const trimmed = (value || '').trim();
+    if (!trimmed) {
+      setError('Please enter a response before submitting for this meal.');
+      return;
+    }
+    const target = (issues || []).filter(issue => issue.meal_id === mealId).sort((a, b) => (b.risk_score || 0) - (a.risk_score || 0))[0];
+    if (!target) {
+      setToast(`No issue group exists for ${MEALS.find(m => m.id === mealId)?.name || mealId} yet.`);
+      return;
+    }
+    try {
+      await api(`/manager/issues/${target.id}/respond`, token, {
+        method: 'POST',
+        body: JSON.stringify({ response: trimmed })
+      });
+      setToast(`Response saved for ${MEALS.find(m => m.id === mealId)?.name || mealId}.`);
       await loadOverview(false);
     } catch (e) {
       setError(e.message);
@@ -1028,9 +1056,10 @@ function App({ embeddedSession, onEmbeddedLogout } = {}) {
               <p>
                 {({
                   dashboard: 'Overview of mess feedback, food quality, and deterministic risk score engine.',
+                  today: 'A single AI-assisted summary of all student feedback for today, with per-meal response actions.',
                   escalations: 'Monitor and inspect high-risk issues (score ≥ 60) and food safety hazards.',
                   menu: 'Official Anna University CEG weekly schedule with customizable overrides.',
-                  feedback: 'View and manage student feedback without revealing individual submitters.',
+                  feedback: 'View the complete feedback history and its manager response for each grouped issue.',
                   insights: 'Patterns and recurring issues grouped by fast Gemini intelligence.',
                   responses: 'Manage and respond to student complaints within the 24-hour window.',
                   reports: 'Review and export comprehensive meal feedback and risk reports.',
@@ -1071,6 +1100,17 @@ function App({ embeddedSession, onEmbeddedLogout } = {}) {
             />
           )}
 
+          {active === 'today' && (
+            <TodayFeedbackOverview
+              overview={overview}
+              issues={issues}
+              feedbackData={feedbackData}
+              onTriggerAI={triggerAI}
+              onSummarizeMeal={summarizeMeal}
+              onSaveMealResponse={saveMealResponse}
+            />
+          )}
+
           {active === 'escalations' && (
             <EscalationsView
               escalations={escalations}
@@ -1102,7 +1142,7 @@ function App({ embeddedSession, onEmbeddedLogout } = {}) {
           )}
 
           {active === 'feedback' && (
-            <IssueList
+            <FeedbackHistoryView
               issues={filteredIssues}
               search={search}
               setSearch={setSearch}
@@ -1112,6 +1152,8 @@ function App({ embeddedSession, onEmbeddedLogout } = {}) {
               setStatusFilter={setStatusFilter}
               tabFilter={tabFilter}
               setTabFilter={setTabFilter}
+              token={token}
+              setError={setError}
               respond={respond}
               onAudit={openAudit}
               onVerify={openVerify}
@@ -1171,7 +1213,7 @@ function App({ embeddedSession, onEmbeddedLogout } = {}) {
       </main>
 
       <nav className="mobile-nav">
-        {NAV.filter(([id]) => ['dashboard', 'escalations', 'menu', 'feedback', 'responses'].includes(id)).map(([id, label, Icon]) => (
+        {NAV.filter(([id]) => ['dashboard', 'today', 'escalations', 'menu', 'feedback', 'responses'].includes(id)).map(([id, label, Icon]) => (
           <button key={id} className={active === id ? 'active' : ''} onClick={() => setActive(id)}>
             <Icon size={18}/>
             <span>{label.split(' ')[0]}</span>
@@ -1286,6 +1328,139 @@ function App({ embeddedSession, onEmbeddedLogout } = {}) {
           <button onClick={() => setToast('')} aria-label="Dismiss"><X size={15}/></button>
         </div>
       )}
+    </div>
+  );
+}
+
+function TodayFeedbackOverview({ overview, issues, feedbackData, onTriggerAI, onSummarizeMeal, onSaveMealResponse }) {
+  const today = overview?.date || dateISO();
+  const todayIssues = useMemo(() => (issues || []).filter(issue => issue.service_date === today), [issues, today]);
+  const todayFeedback = useMemo(() => (feedbackData || []).filter(item => item.service_date === today), [feedbackData, today]);
+
+  const summary = useMemo(() => {
+    const text = [...todayIssues, ...todayFeedback].map(item => `${item.title || ''} ${item.summary || ''} ${item.category || ''}`.trim()).filter(Boolean);
+    if (!text.length) return 'No student feedback was submitted for today yet.';
+    const top = [...new Set(text.flatMap(s => s.toLowerCase().split(/[^a-z0-9]+/).filter(word => word.length > 4)))].slice(0, 8);
+    return `Today's feedback is dominated by ${top.length ? top.join(', ') : 'overall dining quality'} themes, with the strongest concerns centered on service consistency, taste, and meal timing across the campus.`;
+  }, [todayIssues, todayFeedback]);
+
+  const mealCards = useMemo(() => MEALS.map(meal => {
+    const mealIssues = todayIssues.filter(item => item.meal_id === meal.id);
+    const complaintCount = mealIssues.reduce((total, issue) => total + (Number(issue.count) || 0), 0);
+    const average = overview?.meal_ratings?.[meal.id]?.average ?? null;
+    const ratingCount = overview?.meal_ratings?.[meal.id]?.count ?? 0;
+    const issueTopics = mealIssues.map(issue => issue.title).filter(Boolean).slice(0, 3);
+    return { ...meal, complaintCount, average, ratingCount, issueTopics };
+  }), [todayIssues, overview]);
+
+  const [drafts, setDrafts] = useState({});
+  const [mealSummaries, setMealSummaries] = useState({});
+  const [summaryLoading, setSummaryLoading] = useState({});
+  const [summaryErrors, setSummaryErrors] = useState({});
+
+  async function generateMealSummary(mealId) {
+    setSummaryLoading(prev => ({ ...prev, [mealId]: true }));
+    setSummaryErrors(prev => ({ ...prev, [mealId]: '' }));
+    try {
+      const result = await onSummarizeMeal(mealId);
+      setMealSummaries(prev => ({ ...prev, [mealId]: result }));
+    } catch (error) {
+      setSummaryErrors(prev => ({ ...prev, [mealId]: error.message || 'Could not generate the meal summary.' }));
+    } finally {
+      setSummaryLoading(prev => ({ ...prev, [mealId]: false }));
+    }
+  }
+
+  return (
+    <div className="dashboard-content">
+      <section className="hero-panel">
+        <div>
+          <span className="hero-kicker"><BrainCircuit size={14}/> TODAY'S FEEDBACK OVERVIEW</span>
+          <h2>Live campus sentiment for {dateLabel(new Date(today))}.<br/><em>Summarized with Gemini-assisted insight.</em></h2>
+          <p>{summary}</p>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+            <Button kind="light" onClick={onTriggerAI}>
+              <RefreshCw size={15}/> Refresh AI summary
+            </Button>
+          </div>
+        </div>
+        <div className="hero-stat">
+          <span>FEEDBACK TODAY</span>
+          <strong>{todayIssues.reduce((total, issue) => total + (Number(issue.count) || 0), 0) + (todayFeedback.filter(item => item.type === 'Rating').length || 0)}</strong>
+          <small>{todayIssues.length} grouped issue(s) and {todayFeedback.filter(item => item.type === 'Rating').length} rating entries</small>
+        </div>
+      </section>
+
+      <div className="content-grid" style={{ gridTemplateColumns: '1fr' }}>
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <span className="eyebrow">PER-MEAL SUMMARY</span>
+              <h2>Today's four meal checks</h2>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gap: '12px' }}>
+            {mealCards.map(meal => {
+              const Icon = meal.icon;
+              const draft = drafts[meal.id] || '';
+              return (
+                <div key={meal.id} style={{ border: '1px solid var(--line)', borderRadius: '14px', padding: '14px', background: 'var(--surface-2)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span style={{ display: 'inline-grid', placeItems: 'center', width: '36px', height: '36px', borderRadius: '10px', background: 'var(--accent-soft)', color: 'var(--accent)' }}>
+                        <Icon size={18}/>
+                      </span>
+                      <div>
+                        <strong style={{ display: 'block' }}>{meal.name}</strong>
+                        <small style={{ color: 'var(--muted)' }}>{meal.complaintCount} complaint reports · {meal.ratingCount} ratings</small>
+                      </div>
+                    </div>
+                    <span className="status status-open" style={{ background: 'rgba(223,90,44,0.08)', color: 'var(--accent)' }}>
+                      {meal.average ? `${Number(meal.average).toFixed(1)}/5` : 'No ratings'}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
+                    {(meal.issueTopics.length ? meal.issueTopics : ['No major themes recorded yet.']).map(topic => (
+                      <span key={topic} className="count-pill" style={{ fontSize: '9px' }}>{topic}</span>
+                    ))}
+                  </div>
+
+                  <div style={{ marginBottom: '12px' }}>
+                    <Button kind="secondary" onClick={() => generateMealSummary(meal.id)} disabled={summaryLoading[meal.id]}>
+                      <BrainCircuit size={14}/>{summaryLoading[meal.id] ? 'Summarizing…' : mealSummaries[meal.id] ? 'Refresh AI summary' : 'Generate AI summary'}
+                    </Button>
+                    {summaryErrors[meal.id] && <small style={{ display: 'block', color: 'var(--red)', marginTop: '7px' }}>{summaryErrors[meal.id]}</small>}
+                    {mealSummaries[meal.id] && (
+                      <div style={{ border: '1px solid var(--line)', borderRadius: '10px', padding: '10px 12px', marginTop: '8px', background: 'var(--surface)', fontSize: '12px', lineHeight: 1.55 }}>
+                        <strong style={{ display: 'block', marginBottom: '4px' }}>AI meal summary · {mealSummaries[meal.id].count} feedback item(s)</strong>
+                        <span>{mealSummaries[meal.id].summary}</span>
+                        <small style={{ display: 'block', marginTop: '5px', color: 'var(--muted)' }}>
+                          {mealSummaries[meal.id].provider === 'google-genai' ? 'Generated with Gemini' : 'Generated with the data-based fallback'}
+                        </small>
+                      </div>
+                    )}
+                  </div>
+
+                  <textarea
+                    rows="3"
+                    value={draft}
+                    onChange={e => setDrafts(prev => ({ ...prev, [meal.id]: e.target.value }))}
+                    placeholder={`Write a quick response for ${meal.name.toLowerCase()}…`}
+                    style={{ width: '100%', borderRadius: '10px', border: '1px solid var(--line)', background: 'var(--surface)', color: 'var(--text)', padding: '10px 12px', fontSize: '12px', resize: 'vertical' }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
+                    <Button kind="primary" onClick={() => onSaveMealResponse(meal.id, draft)}>
+                      <Send size={14}/> Respond to {meal.name}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
@@ -1576,6 +1751,148 @@ function IssueList({ issues, search, setSearch, mealFilter, setMealFilter, statu
           onVerify={onVerify}
           isReviewer={isReviewer}
         />
+      </section>
+    </>
+  );
+}
+
+function FeedbackHistoryView({ issues, search, setSearch, mealFilter, setMealFilter, statusFilter, setStatusFilter, tabFilter, setTabFilter, respond, onAudit, onVerify, isReviewer = false, token, setError }) {
+  const [expandedId, setExpandedId] = useState(null);
+  const [detailMap, setDetailMap] = useState({});
+  const [loadingIds, setLoadingIds] = useState({});
+
+  const fetchDetail = useCallback(async (issue) => {
+    if (!issue || detailMap[issue.id] || loadingIds[issue.id]) return;
+    setLoadingIds(prev => ({ ...prev, [issue.id]: true }));
+    try {
+      const data = await api(`/manager/issues/${issue.id}`, token);
+      setDetailMap(prev => ({ ...prev, [issue.id]: data }));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoadingIds(prev => ({ ...prev, [issue.id]: false }));
+    }
+  }, [detailMap, loadingIds, setError, token]);
+
+  function toggleIssue(issue) {
+    const nextOpen = expandedId === issue.id ? null : issue.id;
+    setExpandedId(nextOpen);
+    if (nextOpen && !detailMap[issue.id]) {
+      fetchDetail(issue);
+    }
+  }
+
+  return (
+    <>
+      <div className="privacy-banner">
+        <span><ShieldCheck size={21}/></span>
+        <div>
+          <strong>Feedback history overview</strong>
+          <small>Each summary opens the underlying feedback records and the matching manager response for that issue.</small>
+        </div>
+      </div>
+      <div className="filter-tabs">
+        {[['all', 'All'], ['complaints', 'Complaints'], ['ratings', 'Ratings']].map(([id, label]) => (
+          <button key={id} className={tabFilter === id ? 'selected' : ''} onClick={() => setTabFilter(id)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="filter-toolbar">
+        <label className="search-box">
+          <Search size={16}/>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by keyword, category, or meal…"/>
+        </label>
+        <label className="select-filter">
+          <Filter size={14}/>
+          <select value={mealFilter} onChange={e => setMealFilter(e.target.value)}>
+            <option value="all">All meals</option>
+            {MEALS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+        </label>
+        <label className="select-filter">
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+            <option value="all">All statuses</option>
+            <option value="open">Open</option>
+            <option value="responded">Responded</option>
+          </select>
+        </label>
+      </div>
+      <div className="list-summary">
+        <strong>{issues.length} feedback history item{issues.length === 1 ? '' : 's'}</strong>
+        <span>Click a summary to reveal the full feedback history and response for that entry.</span>
+      </div>
+      <section className="panel">
+        {!issues.length ? (
+          <div className="empty-state">
+            <CheckCircle2 size={24}/>
+            <strong>No feedback history yet</strong>
+            <span>Student feedback summaries will appear here once records are submitted.</span>
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: '12px' }}>
+            {issues.map(issue => {
+              const isExpanded = expandedId === issue.id;
+              const detail = detailMap[issue.id];
+              const complaintList = detail?.complaints || [];
+              return (
+                <article key={issue.id} className="feedback-history-card" style={{ border: '1px solid var(--line)', borderRadius: '14px', background: 'var(--surface-2)', overflow: 'hidden' }}>
+                  <button type="button" onClick={() => toggleIssue(issue)} style={{ width: '100%', background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>
+                    <div style={{ padding: '16px 18px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto auto', alignItems: 'center', gap: '12px' }}>
+                      <div style={{ textAlign: 'left', minWidth: 0 }}>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '4px' }}>
+                          <span className="eyebrow" style={{ color: 'var(--accent)' }}>{issue.meal_id?.toUpperCase() || 'GENERAL'} · {shortDate(issue.service_date)}</span>
+                          <Status value={issue.status}/>
+                        </div>
+                        <strong style={{ display: 'block', marginBottom: '5px', fontSize: '15px' }}>{issue.title}</strong>
+                        <small style={{ color: 'var(--muted)', display: 'block', overflowWrap: 'anywhere' }}>{issue.summary}</small>
+                      </div>
+                      <RiskBadge issue={issue} onClick={onAudit}/>
+                      <span style={{ fontSize: '18px', color: 'var(--muted)' }}>{isExpanded ? '−' : '+'}</span>
+                    </div>
+                  </button>
+
+                  {isExpanded && (
+                    <div style={{ borderTop: '1px solid var(--line)', padding: '16px 18px', background: 'var(--surface)' }}>
+                      {loadingIds[issue.id] ? (
+                        <div className="loading-box"><RefreshCw className="spin" size={16}/> Loading feedback history…</div>
+                      ) : (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.25fr 1fr', gap: '16px' }}>
+                          <div>
+                            <strong style={{ display: 'block', marginBottom: '8px' }}>Recorded feedback</strong>
+                            <div style={{ display: 'grid', gap: '8px' }}>
+                              {complaintList.length ? complaintList.map(item => (
+                                <div key={item.id} style={{ border: '1px solid var(--line)', borderRadius: '10px', padding: '10px 12px', background: 'var(--surface-2)' }}>
+                                  <small style={{ color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>{shortDate(item.service_date)} · {item.meal_id?.toUpperCase() || 'GENERAL'}</small>
+                                  <p style={{ margin: 0, fontSize: '12px', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+                                    “{item.description || item.title || issue.summary}”
+                                  </p>
+                                </div>
+                              )) : <small className="small-muted">No specific feedback texts recorded for this summary.</small>}
+                            </div>
+                          </div>
+
+                          <div>
+                            <strong style={{ display: 'block', marginBottom: '8px' }}>Manager response</strong>
+                            <div style={{ border: '1px solid var(--line)', borderRadius: '10px', padding: '12px', background: 'var(--surface-2)', minHeight: '120px', whiteSpace: 'pre-wrap', lineHeight: 1.6, fontSize: '12px' }}>
+                              {issue.response || detail?.response || 'No manager response has been saved for this issue yet.'}
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '12px' }}>
+                              <Button kind="secondary" onClick={e => { e.stopPropagation(); onAudit(issue); }}><Info size={13}/> View audit</Button>
+                              <Button onClick={e => { e.stopPropagation(); respond(issue); }}>
+                                {issue.status === 'Responded' ? 'Edit response' : 'Respond'}
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        )}
       </section>
     </>
   );
