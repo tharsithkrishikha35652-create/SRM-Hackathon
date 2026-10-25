@@ -11,10 +11,8 @@
     "install:all": "npm install --workspaces",
     "dev": "npm run dev:student",
     "dev:student": "npm run dev --workspace messmate-student-app",
-    "dev:manager": "npm run dev --workspace messmate-manager-web",
-    "build": "npm run build --workspaces",
+    "build": "npm run build --workspace messmate-student-app",
     "build:student": "npm run build --workspace messmate-student-app",
-    "build:manager": "npm run build --workspace messmate-manager-web",
     "build:unified": "node scripts/build-unified.js"
   }
 }

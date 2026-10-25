@@ -7,7 +7,6 @@ import {
   ShieldCheck, Filter, Eye, Check, Users, Activity, Bell, AlertOctagon,
   ShieldAlert, Award, FileText, CheckCheck, Info, Flame
 } from 'lucide-react';
-import './styles.css';
 
 const API = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' ? '/api' : 'http://127.0.0.1:8000/api');
 const STORE_KEY = 'messmate_manager_session';
@@ -677,8 +676,8 @@ function EscalationsView({ escalations, loading, onRefresh, isReviewer, onAudit,
   );
 }
 
-function App() {
-  const [session, setSession] = useState(readSession);
+function App({ embeddedSession, onEmbeddedLogout } = {}) {
+  const [session, setSession] = useState(() => embeddedSession || readSession());
   const [feedbackData, setFeedbackData] = useState([]);
   const [theme, setTheme] = useState(() => localStorage.getItem('messmate_manager_theme') || 'light');
   const [active, setActive] = useState('dashboard');
@@ -815,6 +814,7 @@ function App() {
     setOverview(null);
     setMenu([]);
     setEscalations([]);
+    onEmbeddedLogout?.();
   }
 
   async function toggleTheme() {

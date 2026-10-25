@@ -9,14 +9,6 @@
       "destination": "/api/index.py"
     },
     {
-      "source": "/manager/(.*)",
-      "destination": "/manager/index.html"
-    },
-    {
-      "source": "/manager",
-      "destination": "/manager/index.html"
-    },
-    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

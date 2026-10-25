@@ -12,7 +12,7 @@
 - Wired menu add/edit/delete by date to the existing manager menu API.
 - Wired complaint responses to the existing manager response API.
 - Added issue search, meal/status filters, CSV export, persistent light/dark mode and responsive navigation.
-- Added a separate manager login flow; the backend verifies the `manager` role.
+- Integrated the manager dashboard into the same frontend entry point; credentials determine whether the student or manager/reviewer dashboard is shown.
 - Updated student and manager `.env.example` files to specify `VITE_APP_ROLE=student` and `VITE_APP_ROLE=manager` respectively.
 - Updated the student menu API to read the menu items saved by the manager for the selected date, so manager edits are reflected in the student app.
 - Removed individual free-text feedback comments from the manager rating aggregation response; manager views receive aggregated rating descriptions instead.
@@ -45,6 +45,5 @@
 
 1. Extract the project ZIP.
 2. Install backend dependencies from `backend/requirements.txt` and run `python run.py` from `backend/`.
-3. Run `npm install` then `npm run dev` from `student-app/` (port 5173).
-4. Run `npm install` then `npm run dev` from `manager-web/` (port 5174).
-5. Use `manager@srm.edu` / `Manager@123` for the local demo manager account.
+3. Run `npm install` at the repository root, then `npm run dev` to start the only frontend at `http://localhost:5174/`.
+4. Sign in there with the student or manager demo credentials; the role selects the matching dashboard. The manager dashboard source is embedded in the unified app and has no standalone entry point.

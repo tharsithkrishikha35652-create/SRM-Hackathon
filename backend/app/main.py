@@ -47,6 +47,14 @@ if os.environ.get("VERCEL"):
 else:
     DB_PATH = os.path.join(BASE_DIR, "messmate.db")
 TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Kolkata"))
+ALLOW_FEEDBACK_OUTSIDE_WINDOW = os.getenv(
+    "ALLOW_FEEDBACK_OUTSIDE_WINDOW",
+    "false" if os.getenv("VERCEL") or os.getenv("APP_ENV", "").lower() == "production" else "true",
+).lower() in {"1", "true", "yes"}
+ALLOW_MULTIPLE_FEEDBACK = os.getenv(
+    "ALLOW_MULTIPLE_FEEDBACK",
+    "false" if os.getenv("VERCEL") or os.getenv("APP_ENV", "").lower() == "production" else "true",
+).lower() in {"1", "true", "yes"}
 
 app = FastAPI(title="MessMate API", version="2.5.0")
 app.add_middleware(
@@ -167,8 +175,7 @@ def init_db():
             comment TEXT DEFAULT '',
             category TEXT DEFAULT '',
             dietary TEXT DEFAULT 'non_veg',
-            created_at TEXT NOT NULL,
-            UNIQUE(user_id, meal_id, service_date)
+            created_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS complaints(
             id INTEGER PRIMARY KEY,
@@ -275,6 +282,36 @@ def init_db():
         if "dietary" not in feed_cols:
             c.execute("ALTER TABLE feedback ADD COLUMN dietary TEXT DEFAULT 'non_veg'")
 
+        # Remove the legacy one-rating-per-user/meal/day constraint for testing.
+        feedback_sql = c.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='feedback'"
+        ).fetchone()["sql"] or ""
+        if "UNIQUE(user_id, meal_id, service_date)" in feedback_sql.replace("\n", " "):
+            c.execute("PRAGMA foreign_keys=OFF")
+            c.execute("ALTER TABLE feedback RENAME TO feedback_legacy")
+            c.execute("""
+                CREATE TABLE feedback(
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    meal_id TEXT NOT NULL,
+                    service_date TEXT NOT NULL,
+                    rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+                    items_json TEXT NOT NULL DEFAULT '{}',
+                    comment TEXT DEFAULT '',
+                    category TEXT DEFAULT '',
+                    dietary TEXT DEFAULT 'non_veg',
+                    created_at TEXT NOT NULL
+                )
+            """)
+            c.execute("""
+                INSERT INTO feedback(id,user_id,meal_id,service_date,rating,items_json,comment,category,dietary,created_at)
+                SELECT id,user_id,meal_id,service_date,rating,items_json,comment,category,dietary,created_at
+                FROM feedback_legacy
+            """)
+            c.execute("DROP TABLE feedback_legacy")
+            c.execute("PRAGMA foreign_keys=ON")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_feedback_period ON feedback(meal_id, service_date)")
+
         user_cols = [r["name"] for r in c.execute("PRAGMA table_info(users)").fetchall()]
         if "dietary_preference" not in user_cols:
             c.execute("ALTER TABLE users ADD COLUMN dietary_preference TEXT DEFAULT 'non_veg'")
@@ -325,23 +362,6 @@ def init_db():
             "INSERT OR IGNORE INTO users(identifier,name,role,password_hash,department,semester,dietary_preference) VALUES(?,?,?,?,?,?,?)",
             ("demo.student@srm.edu", "Demo Student", "student", hash_password("DemoStudent@123"), "Computer Science", "Semester 1", "non_veg")
         )
-
-        # Seed initial complaints if empty
-        if c.execute("SELECT COUNT(*) n FROM complaints").fetchone()["n"] == 0:
-            today = datetime.now(TZ).date().isoformat()
-            now_iso = datetime.now(TZ).isoformat()
-            seed = [
-                ("lunch", "Food Quality", "Chicken curry was too salty", "The curry was very salty and difficult to eat."),
-                ("lunch", "Food Temperature", "Lunch was served cold", "The rice and curry were cold when served."),
-                ("lunch", "Food Temperature", "Food was cold", "Rice was not warm enough."),
-                ("lunch", "Food Quality", "Too much salt in curry", "The curry tasted excessively salty."),
-                ("dinner", "Taste", "Chapati was hard", "The chapati was hard and dry.")
-            ]
-            for meal, cat, title, desc in seed:
-                c.execute(
-                    "INSERT INTO complaints(user_id,meal_id,service_date,category,title,description,status,processed_for_ai,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                    (1, meal, today, cat, title, desc, "Submitted", 0, now_iso)
-                )
 
         # Seed reviewer if missing
         if c.execute("SELECT COUNT(*) n FROM users WHERE identifier='reviewer@srm.edu'").fetchone()["n"] == 0:
@@ -553,23 +573,35 @@ def set_theme(body: ThemeBody, user=Depends(current_user)):
     return {"theme": body.theme}
 
 @app.get("/api/menu/today")
-def today_menu(dietary: str = Query(default="non_veg"), user=Depends(current_user)):
+def today_menu(
+    dietary: str = Query(default="non_veg"),
+    menu_date: Optional[str] = Query(default=None),
+    user=Depends(current_user),
+):
     now = datetime.now(TZ)
     current_date = now.date()
-    active = active_meal(now)
+    selected_date = current_date
+    if menu_date:
+        try:
+            selected_date = date.fromisoformat(menu_date)
+        except ValueError:
+            raise HTTPException(400, "Use YYYY-MM-DD for the menu date")
+    is_today = selected_date == current_date
+    active = active_meal(now) if is_today else None
     diet = "veg" if dietary.lower() == "veg" else "non_veg"
+    selected_time = now.strftime("%H:%M") if is_today else ""
     
     meals = [
         {
             **m,
-            "items": resolve_menu_items(current_date, m["id"], diet),
-            "status": "open" if active and active["id"] == m["id"] else ("upcoming" if now.strftime("%H:%M") < m["start"] else "closed")
+            "items": resolve_menu_items(selected_date, m["id"], diet),
+            "status": "open" if active and active["id"] == m["id"] else ("upcoming" if is_today and selected_time < m["start"] else "closed")
         }
         for m in MEALS
     ]
     return {
-        "date": current_date.isoformat(),
-        "date_label": now.strftime("%a, %d %b %Y"),
+        "date": selected_date.isoformat(),
+        "date_label": selected_date.strftime("%a, %d %b %Y"),
         "active_meal": active["id"] if active else None,
         "dietary": diet,
         "meals": meals
@@ -622,11 +654,18 @@ def submit_feedback(body: FeedbackBody, user=Depends(require_role("student"))):
     service_date = now.date().isoformat()
 
     active = active_meal(now)
-    if not active or active["id"] != body.meal_id:
+    if not ALLOW_FEEDBACK_OUTSIDE_WINDOW and (not active or active["id"] != body.meal_id):
         raise HTTPException(403, f"{meal['name']} feedback is open {meal['time']} only.")
 
     now_iso = now.isoformat()
     with connect() as c:
+        if not ALLOW_MULTIPLE_FEEDBACK:
+            existing = c.execute(
+                "SELECT 1 FROM feedback WHERE user_id=? AND meal_id=? AND service_date=? LIMIT 1",
+                (user["id"], body.meal_id, service_date),
+            ).fetchone()
+            if existing:
+                raise HTTPException(400, "You have already submitted feedback for this meal today.")
         try:
             c.execute(
                 """INSERT INTO feedback(user_id,meal_id,service_date,rating,items_json,comment,category,dietary,created_at)
@@ -635,7 +674,7 @@ def submit_feedback(body: FeedbackBody, user=Depends(require_role("student"))):
             )
             c.commit()
         except sqlite3.IntegrityError:
-            raise HTTPException(400, "You have already submitted feedback for this meal today.")
+            raise HTTPException(400, "Feedback could not be saved. Check your rating and try again.")
 
     return {"ok": True, "message": "Thanks! Your feedback has been submitted."}
 

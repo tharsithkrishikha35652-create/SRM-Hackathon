@@ -1,9 +1,9 @@
 # MessMate — Student App + WebApp Management Interface
 
-MessMate serves the student and manager dashboards from one unified React/Vite app and one shared FastAPI + SQLite backend.
+MessMate serves student and manager dashboards from one React/Vite app at `http://localhost:5174/`, backed by one FastAPI + SQLite API. The login response determines which dashboard is rendered.
 
-- `student-app/` — unified student and manager app (port 5173). The authenticated account role determines which dashboard is shown.
-- `manager-web/` — legacy standalone manager frontend (optional; not needed for the unified local setup).
+- `student-app/` — the only frontend application. Students and managers sign in here; the account role selects the dashboard.
+- `manager-web/src/` — manager dashboard component and its isolated styles, imported by the unified app; it has no separate app entry point or dev server.
 - `backend/` — shared API, authentication, SQLite persistence, menu management, anonymised complaint aggregation, manager responses and deadlines.
 
 ## Manager web interface
@@ -17,7 +17,7 @@ These are local demonstration credentials only.
 
 ## Run locally
 
-From the repository root, install both frontends once:
+From the repository root, install dependencies once:
 
 ```bash
 npm install
@@ -36,13 +36,13 @@ python run.py
 ```
 API: `http://127.0.0.1:8000` · API docs: `http://127.0.0.1:8000/docs`
 
-### 2. Unified student and manager app
+### 2. Unified app
 ```bash
-npm run dev:student
+npm run dev
 ```
-Open `http://localhost:5173`. Sign in with either a student or manager account; the backend identifies the account role and opens the matching dashboard.
+Open `http://localhost:5174`. Sign in with either a student or manager account; the backend identifies the account role and opens the matching dashboard. For student menu testing, change the visible “Menu day” date input on the student homepage.
 
-Build both frontends from the repository root with `npm run build`.
+Build the unified app from the repository root with `npm run build`.
 
 Windows users can use `start-windows.bat` to launch the API and unified app. See `IMPLEMENTATION_REPORT.md` for checks performed and remaining verification limits.
 
