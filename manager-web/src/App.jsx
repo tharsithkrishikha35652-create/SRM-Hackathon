@@ -762,8 +762,17 @@ function App() {
 
   useEffect(() => {
     if (!token) return undefined;
-    const interval = setInterval(() => loadOverview(false), 10000);
-    return () => clearInterval(interval);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') loadOverview(false);
+    };
+    const interval = setInterval(refreshWhenVisible, 5000);
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
   }, [token, loadOverview]);
 
   useEffect(() => {

@@ -74,6 +74,56 @@ def connect():
     c.execute("PRAGMA foreign_keys=ON")
     return c
 
+def migrate_user_role_constraint():
+    """Allow reviewer accounts in databases created before reviewer support."""
+    if not os.path.exists(DB_PATH):
+        return
+
+    c = sqlite3.connect(DB_PATH, timeout=10)
+    try:
+        c.execute("PRAGMA foreign_keys=OFF")
+        table = c.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+        ).fetchone()
+        if not table or "reviewer" in (table[0] or "").lower():
+            return
+
+        existing = {row[1] for row in c.execute("PRAGMA table_info(users)")}
+        columns = [
+            "id", "identifier", "name", "role", "password_hash", "register_no",
+            "department", "semester", "theme", "dietary_preference",
+        ]
+        select_values = {
+            "id": "id", "identifier": "identifier", "name": "name", "role": "role",
+            "password_hash": "password_hash", "register_no": "register_no",
+            "department": "department", "semester": "semester", "theme": "theme",
+            "dietary_preference": "dietary_preference",
+        }
+        copied = [name for name in columns if name in existing]
+        c.execute("""
+            CREATE TABLE users_new(
+                id INTEGER PRIMARY KEY,
+                identifier TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('student','manager','reviewer')),
+                password_hash TEXT NOT NULL,
+                register_no TEXT,
+                department TEXT,
+                semester TEXT,
+                theme TEXT DEFAULT 'light',
+                dietary_preference TEXT DEFAULT 'non_veg'
+            )
+        """)
+        c.execute(
+            f"INSERT INTO users_new ({','.join(copied)}) "
+            f"SELECT {','.join(select_values[name] for name in copied)} FROM users"
+        )
+        c.execute("DROP TABLE users")
+        c.execute("ALTER TABLE users_new RENAME TO users")
+        c.commit()
+    finally:
+        c.close()
+
 def hash_password(password, salt=None):
     salt = salt or secrets.token_hex(16)
     hashed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 180000).hex()
@@ -319,6 +369,7 @@ def init_db():
             )
         c.commit()
 
+migrate_user_role_constraint()
 init_db()
 
 # Synchronously seed baseline issue groups from complaints on startup without blocking
@@ -334,7 +385,7 @@ _seed_initial_groups()
 class LoginBody(BaseModel):
     identifier: str
     password: str
-    role: str
+    role: Optional[str] = None
 
 class FeedbackBody(BaseModel):
     meal_id: str
@@ -437,15 +488,15 @@ def resolve_menu_items(target_date: date, meal_id: str, dietary: str = "non_veg"
 def login(body: LoginBody):
     ident = body.identifier.strip().lower()
     with connect() as c:
-        user = c.execute("SELECT * FROM users WHERE LOWER(identifier)=?", (ident,)).fetchone()
+        user = c.execute("SELECT * FROM users WHERE LOWER(identifier)=? OR LOWER(register_no)=?", (ident, ident)).fetchone()
     if not user or not check_password(body.password, user["password_hash"]):
         raise HTTPException(401, "Incorrect email or password")
-    
-    # Allow manager/reviewer flexibility in admin login
+
+    # Credential-only login determines the dashboard from the stored account role.
     if body.role in ("manager", "reviewer"):
         if user["role"] not in ("manager", "reviewer"):
             raise HTTPException(403, "This account belongs to a student login. Choose student login.")
-    elif user["role"] != body.role:
+    elif body.role and user["role"] != body.role:
         raise HTTPException(403, "This account belongs to a different login type. Choose the correct login.")
 
     token = secrets.token_urlsafe(36)
@@ -568,8 +619,7 @@ def my_feedback(user=Depends(require_role("student"))):
 def submit_feedback(body: FeedbackBody, user=Depends(require_role("student"))):
     meal = meal_by_id(body.meal_id)
     now = datetime.now(TZ)
-    if body.service_date != now.date().isoformat():
-        raise HTTPException(400, "Feedback can only be submitted for today's meals")
+    service_date = now.date().isoformat()
 
     active = active_meal(now)
     if not active or active["id"] != body.meal_id:
@@ -581,7 +631,7 @@ def submit_feedback(body: FeedbackBody, user=Depends(require_role("student"))):
             c.execute(
                 """INSERT INTO feedback(user_id,meal_id,service_date,rating,items_json,comment,category,dietary,created_at)
                    VALUES(?,?,?,?,?,?,?,?,?)""",
-                (user["id"], body.meal_id, body.service_date, body.rating, json.dumps(body.items or {}), body.comment.strip()[:1000], body.category.strip()[:60], body.dietary, now_iso)
+                (user["id"], body.meal_id, service_date, body.rating, json.dumps(body.items or {}), body.comment.strip()[:1000], body.category.strip()[:60], body.dietary, now_iso)
             )
             c.commit()
         except sqlite3.IntegrityError:
@@ -593,8 +643,7 @@ def submit_feedback(body: FeedbackBody, user=Depends(require_role("student"))):
 def submit_complaint(body: ComplaintBody, background_tasks: BackgroundTasks, user=Depends(require_role("student"))):
     meal = meal_by_id(body.meal_id)
     now = datetime.now(TZ)
-    if body.service_date != now.date().isoformat():
-        raise HTTPException(400, "Complaints can only be submitted for today's meals")
+    service_date = now.date().isoformat()
 
     active = active_meal(now)
     if not active or active["id"] != body.meal_id:
@@ -612,7 +661,7 @@ def submit_complaint(body: ComplaintBody, background_tasks: BackgroundTasks, use
         cur = c.execute(
             """INSERT INTO complaints(user_id,meal_id,service_date,category,title,description,status,processed_for_ai,created_at)
                VALUES(?,?,?,?,?,?,?,?,?)""",
-            (user["id"], body.meal_id, body.service_date, body.category.strip()[:60], title[:120], desc[:2000], "Submitted", 0, now_iso)
+            (user["id"], body.meal_id, service_date, body.category.strip()[:60], title[:120], desc[:2000], "Submitted", 0, now_iso)
         )
         c.commit()
         comp_id = cur.lastrowid

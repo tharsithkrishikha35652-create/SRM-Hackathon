@@ -1,9 +1,9 @@
 # MessMate — Student App + WebApp Management Interface
 
-This project contains two separate React/Vite frontends and one shared FastAPI + SQLite backend.
+MessMate serves the student and manager dashboards from one unified React/Vite app and one shared FastAPI + SQLite backend.
 
-- `student-app/` — student-facing mobile-first app (port 5173).
-- `manager-web/` — manager-facing **WebApp Management Interface** (port 5174), redesigned from the supplied screenshot reference.
+- `student-app/` — unified student and manager app (port 5173). The authenticated account role determines which dashboard is shown.
+- `manager-web/` — legacy standalone manager frontend (optional; not needed for the unified local setup).
 - `backend/` — shared API, authentication, SQLite persistence, menu management, anonymised complaint aggregation, manager responses and deadlines.
 
 ## Manager web interface
@@ -15,7 +15,7 @@ The manager frontend includes Manager Login, Dashboard, Menu Management, Feedbac
 
 These are local demonstration credentials only.
 
-## Run locally (three terminals)
+## Run locally
 
 From the repository root, install both frontends once:
 
@@ -36,22 +36,15 @@ python run.py
 ```
 API: `http://127.0.0.1:8000` · API docs: `http://127.0.0.1:8000/docs`
 
-### 2. Student app
+### 2. Unified student and manager app
 ```bash
 npm run dev:student
 ```
-Open `http://localhost:5173`.
-
-### 3. Manager web
-```bash
-npm run dev:manager
-```
+Open `http://localhost:5173`. Sign in with either a student or manager account; the backend identifies the account role and opens the matching dashboard.
 
 Build both frontends from the repository root with `npm run build`.
 
-Open `http://localhost:5174`.
-
-Windows users can use `start-windows.bat` to launch all three processes. The manager frontend alone can be started with `manager-web/start-manager-web.bat` after the backend is running. See `IMPLEMENTATION_REPORT.md` for checks performed and remaining verification limits.
+Windows users can use `start-windows.bat` to launch the API and unified app. See `IMPLEMENTATION_REPORT.md` for checks performed and remaining verification limits.
 
 ## Manager menu API
 The manager can view menu items by date and meal, add new items, edit existing items and delete items. Menu entries are stored in SQLite. Manager feedback views return grouped issue summaries and anonymised rating aggregates, not individual student identities.
