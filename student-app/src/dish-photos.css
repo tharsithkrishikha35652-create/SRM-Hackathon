@@ -1,0 +1,261 @@
+.weekly-meal-photo {
+  display: block;
+  width: min(100%, 270px);
+  height: 154px;
+  margin: 0 0 7px;
+  object-fit: cover;
+  object-position: center;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.weekly-photo-credit,
+.dish-photo-credit {
+  display: inline-block;
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.weekly-photo-credit:hover,
+.dish-photo-credit:hover {
+  color: var(--accent);
+}
+
+/* Student meal rating popup: clear menu summary, scannable dishes, and calm form sections. */
+.rating-modal-backdrop {
+  z-index: 40;
+  padding: clamp(12px, 3vw, 30px);
+  background: rgb(20 23 18 / 72%);
+  backdrop-filter: blur(7px);
+}
+
+.rating-modal {
+  width: min(680px, 100%);
+  max-height: min(900px, calc(100dvh - 32px));
+  overflow: auto;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+  border-radius: 22px;
+  box-shadow: 0 34px 100px rgb(10 15 10 / 38%);
+}
+
+.rating-modal-header {
+  margin: 0;
+  padding: 25px 28px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.rating-modal-header .eyebrow,
+.rating-section-heading .eyebrow,
+.modal-meal-details .eyebrow {
+  color: var(--accent);
+}
+
+.rating-modal-header h2 {
+  margin: 6px 0 5px;
+  font-size: 25px;
+}
+
+.rating-modal-header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.rating-modal-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  padding: 22px 28px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+
+.rating-modal-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  justify-self: start;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.rating-modal-time svg {
+  color: var(--accent);
+}
+
+.rating-modal-time > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.modal-meal-details {
+  min-width: 0;
+  align-self: center;
+}
+
+.modal-meal-details h3 {
+  margin: 5px 0 12px;
+  font-size: 19px;
+}
+
+.rating-meal-items {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 17px;
+  max-height: 176px;
+  overflow: auto;
+  margin: 0;
+  padding: 0 5px 0 19px;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.rating-meal-items li {
+  padding-left: 1px;
+}
+
+.rating-meal-items li::marker {
+  color: var(--accent);
+}
+
+.rating-modal-form {
+  display: grid;
+  gap: 0;
+}
+
+.rating-modal-section {
+  display: grid;
+  gap: 11px;
+  padding: 19px 28px;
+  border-bottom: 1px solid var(--line);
+}
+
+.rating-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rating-section-heading .field-label {
+  display: block;
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.rating-value {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.rating-value.selected {
+  color: var(--accent);
+}
+
+.rating-modal .rating-picker {
+  margin: 0;
+  min-height: 32px;
+}
+
+.rating-modal .stars {
+  gap: 5px;
+}
+
+.rating-modal .star {
+  padding: 3px;
+  border-radius: 7px;
+}
+
+.rating-modal .category-chips button {
+  padding: 8px 11px;
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.rating-modal .modal-card textarea,
+.rating-modal textarea {
+  min-height: 82px;
+  margin-top: 1px;
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+.rating-modal-footer {
+  display: grid;
+  gap: 13px;
+  padding: 17px 28px 23px;
+}
+
+.rating-modal-footer .privacy-note {
+  align-items: center;
+  font-size: 10px;
+}
+
+.rating-modal-footer .primary-button {
+  min-height: 46px;
+}
+
+@media (max-width: 560px) {
+  .rating-modal-backdrop {
+    padding: 8px;
+    align-items: end;
+  }
+
+  .rating-modal {
+    width: 100%;
+    max-height: calc(100dvh - 16px);
+    border-radius: 20px 20px 12px 12px;
+  }
+
+  .rating-modal-header {
+    padding: 19px 19px 15px;
+  }
+
+  .rating-modal-header h2 {
+    font-size: 21px;
+  }
+
+  .rating-modal-overview {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 15px 19px;
+  }
+
+  .modal-meal-details h3 {
+    font-size: 16px;
+  }
+
+  .rating-meal-items {
+    grid-template-columns: 1fr;
+    gap: 4px;
+    max-height: 132px;
+    font-size: 10px;
+  }
+
+  .rating-modal-section {
+    padding: 15px 19px;
+  }
+
+  .rating-modal .rating-picker {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .rating-modal-footer {
+    padding: 15px 19px 19px;
+  }
+}

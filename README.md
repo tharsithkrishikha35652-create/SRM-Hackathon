@@ -25,22 +25,13 @@ npm install
 
 Then use the root scripts below, or run `start-windows.bat` on Windows.
 
-### 1. Backend
-```bash
-cd backend
-python -m venv .venv
-# Windows PowerShell: .venv\Scripts\Activate.ps1
-# macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
-python run.py
-```
-API: `http://127.0.0.1:8000` · API docs: `http://127.0.0.1:8000/docs`
-
-### 2. Unified app
+### Run the app and API together
 ```bash
 npm run dev
 ```
-Open `http://localhost:5174`. Sign in with either a student or manager account; the backend identifies the account role and opens the matching dashboard. For student menu testing, change the visible “Menu day” date input on the student homepage.
+The Vite server starts FastAPI automatically on a private, dynamically assigned loopback port and proxies `/api` through port 5174. No separate API window or port 8000 is needed. Open `http://localhost:5174`, then sign in with a student or manager account. For student menu testing, change the visible “Menu day” date input on the student homepage.
+
+The backend Python dependencies must be installed once from `backend/requirements.txt` into the repository or backend virtual environment. The development server detects `.venv` automatically; set `MESSMATE_PYTHON` if using another interpreter.
 
 Build the unified app from the repository root with `npm run build`.
 

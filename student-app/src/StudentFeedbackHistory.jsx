@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CalendarDays, Clock3, MessageSquare, RefreshCw, ShieldCheck, Star } from 'lucide-react';
 
-const API = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' ? '/api' : 'http://127.0.0.1:8000/api');
+const API = import.meta.env.VITE_API_URL || '/api';
 const MEALS = [
   { id: 'all', label: 'All meals' },
   { id: 'breakfast', label: 'Breakfast' },

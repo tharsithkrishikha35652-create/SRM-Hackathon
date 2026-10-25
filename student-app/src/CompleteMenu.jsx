@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, BookOpen, CalendarDays, RefreshCw, ShieldCheck } from 'lucide-react';
 
-const API = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' ? '/api' : 'http://127.0.0.1:8000/api');
+const API = import.meta.env.VITE_API_URL || '/api';
 const DIETARY_OPTIONS = [
   { id: 'veg', label: 'Vegetarian' },
   { id: 'non_veg', label: 'Non-Vegetarian' },
@@ -12,7 +12,6 @@ const MEALS = [
   { id: 'snacks', label: 'Snacks', time: '3:00–5:00 PM' },
   { id: 'dinner', label: 'Dinner', time: '7:00–10:00 PM' },
 ];
-
 export default function CompleteMenu({ token, dietary = 'non_veg', setDietary }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -83,7 +82,9 @@ export default function CompleteMenu({ token, dietary = 'non_veg', setDietary })
                 <th scope="row"><strong>{day.label.split(',')[0]}</strong><small>{new Date(`${day.date}T12:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}</small></th>
                 {MEALS.map(meal => {
                   const items = day.meals?.find(item => item.id === meal.id)?.items || [];
-                  return <td key={meal.id}><ul>{items.map((item, index) => <li key={`${meal.id}-${index}`}>{item}</li>)}</ul></td>;
+                  return <td key={meal.id}>
+                    <ul>{items.map((item, index) => <li key={`${meal.id}-${index}`}>{item}</li>)}</ul>
+                  </td>;
                 })}
               </tr>
             ))}</tbody>

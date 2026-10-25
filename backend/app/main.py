@@ -647,6 +647,51 @@ def my_feedback(user=Depends(require_role("student"))):
 
     return {"ratings": ratings, "complaints": complaints}
 
+@app.get("/api/feedback/responses")
+def student_feedback_responses(user=Depends(require_role("student"))):
+    """Return anonymized overall feedback summaries and manager responses by meal."""
+    with connect() as c:
+        rating_rows = c.execute(
+            "SELECT meal_id, AVG(rating) AS average, COUNT(*) AS count FROM feedback GROUP BY meal_id"
+        ).fetchall()
+        issue_rows = c.execute(
+            """SELECT meal_id, service_date, title, summary, count, status, response, responded_at
+               FROM issue_groups
+               ORDER BY service_date DESC, responded_at DESC, id DESC"""
+        ).fetchall()
+
+    ratings_by_meal = {
+        row["meal_id"]: {"average": round(row["average"], 1), "count": row["count"]}
+        for row in rating_rows
+    }
+    issues_by_meal = {meal["id"]: [] for meal in MEALS}
+    for row in issue_rows:
+        if row["meal_id"] not in issues_by_meal:
+            continue
+        issues_by_meal[row["meal_id"]].append({
+            "service_date": row["service_date"],
+            "title": row["title"],
+            "summary": row["summary"],
+            "report_count": row["count"],
+            "status": row["status"],
+            "response": row["response"] or "",
+            "responded_at": row["responded_at"],
+        })
+
+    return {
+        "meals": [
+            {
+                "id": meal["id"],
+                "name": meal["name"],
+                "rating_average": ratings_by_meal.get(meal["id"], {}).get("average"),
+                "rating_count": ratings_by_meal.get(meal["id"], {}).get("count", 0),
+                "feedback_count": sum(issue["report_count"] for issue in issues_by_meal[meal["id"]]),
+                "feedback_summaries": issues_by_meal[meal["id"]],
+            }
+            for meal in MEALS
+        ]
+    }
+
 @app.post("/api/feedback")
 def submit_feedback(body: FeedbackBody, user=Depends(require_role("student"))):
     meal = meal_by_id(body.meal_id)

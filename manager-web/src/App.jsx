@@ -8,7 +8,7 @@ import {
   ShieldAlert, Award, FileText, CheckCheck, Info, Flame
 } from 'lucide-react';
 
-const API = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' ? '/api' : 'http://127.0.0.1:8000/api');
+const API = import.meta.env.VITE_API_URL || '/api';
 const STORE_KEY = 'messmate_manager_session';
 
 const MEALS = [
