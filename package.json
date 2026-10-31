@@ -14,5 +14,15 @@
     "build": "npm run build --workspace messmate-student-app",
     "build:student": "npm run build --workspace messmate-student-app",
     "build:unified": "node scripts/build-unified.js"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.14.7"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.14.7"
+  },
+  "allowScripts": {
+    "@firebase/util@1.15.3": true,
+    "protobufjs@7.6.6": true
   }
 }
