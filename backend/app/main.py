@@ -6,6 +6,8 @@ from datetime import datetime, date, time, timedelta
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import sqlite3, os, secrets, hashlib, hmac, json, re
+import firebase_admin
+from firebase_admin import auth as firebase_auth, credentials
 
 # Load environment variables (.env in backend or root)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -32,21 +34,9 @@ from app.gemini_service import (
     generate_meal_summary
 )
 
-# Handle SQLite on Vercel Serverless (where repository filesystem is read-only)
-if os.environ.get("VERCEL"):
-    import shutil
-    TMP_DB = "/tmp/messmate.db"
-    SEED_DB = os.path.join(BASE_DIR, "seed.db")
-    if not os.path.exists(SEED_DB):
-        SEED_DB = os.path.join(BASE_DIR, "messmate.db")
-    if not os.path.exists(TMP_DB) and os.path.exists(SEED_DB):
-        try:
-            shutil.copy2(SEED_DB, TMP_DB)
-        except Exception as e:
-            print(f"Warning: could not copy seed db: {e}")
-    DB_PATH = TMP_DB if os.path.exists(TMP_DB) else SEED_DB
-else:
-    DB_PATH = os.path.join(BASE_DIR, "messmate.db")
+# Vercel's writable filesystem is ephemeral; start a fresh schema in /tmp rather
+# than copying the former demo-seeded database into deployments.
+DB_PATH = "/tmp/messmate.db" if os.environ.get("VERCEL") else os.path.join(BASE_DIR, "messmate.db")
 TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Kolkata"))
 ALLOW_FEEDBACK_OUTSIDE_WINDOW = os.getenv(
     "ALLOW_FEEDBACK_OUTSIDE_WINDOW",
@@ -138,19 +128,73 @@ def hash_password(password, salt=None):
     hashed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 180000).hex()
     return f"{salt}${hashed}"
 
-def check_password(password, stored):
+def verify_firebase_token(token: str) -> dict:
+    """Verify Firebase ID tokens with the Admin SDK; never trust client claims."""
     try:
-        salt, expected = stored.split("$", 1)
-        actual = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 180000).hex()
-        return hmac.compare_digest(actual, expected)
-    except Exception:
-        return False
+        firebase_admin.get_app()
+    except ValueError:
+        service_account_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+        service_account_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        project_id = os.getenv("FIREBASE_PROJECT_ID", "mess-mate-418df")
+        if service_account_json:
+            credential = credentials.Certificate(json.loads(service_account_json))
+        elif service_account_path:
+            credential = credentials.Certificate(service_account_path)
+        else:
+            credential = credentials.ApplicationDefault()
+        firebase_admin.initialize_app(credential, {"projectId": project_id})
+    try:
+        claims = firebase_auth.verify_id_token(token, check_revoked=True)
+    except Exception as error:
+        raise HTTPException(401, "Firebase session is invalid or expired. Please sign in again.") from error
+    if claims.get("aud") != os.getenv("FIREBASE_PROJECT_ID", "mess-mate-418df"):
+        raise HTTPException(401, "Firebase token belongs to a different project.")
+    return claims
+
+def firebase_profile(claims: dict) -> dict:
+    uid = claims.get("uid")
+    email = (claims.get("email") or "").strip().lower()
+    if not uid or not email:
+        raise HTTPException(403, "A Firebase account with an email address is required.")
+    if claims.get("email_verified") is not True:
+        raise HTTPException(403, "Verify your email address before using MessMate.")
+    manager_emails = {item.strip().lower() for item in os.getenv("FIREBASE_MANAGER_EMAILS", "").split(",") if item.strip()}
+    reviewer_emails = {item.strip().lower() for item in os.getenv("FIREBASE_REVIEWER_EMAILS", "").split(",") if item.strip()}
+    role = "reviewer" if email in reviewer_emails else "manager" if email in manager_emails else "student"
+    name = str(claims.get("name") or email.split("@", 1)[0])[:120]
+
+    with connect() as connection:
+        user = connection.execute("SELECT * FROM users WHERE firebase_uid=? OR LOWER(identifier)=?", (uid, email)).fetchone()
+        if user:
+            if user["firebase_uid"] and user["firebase_uid"] != uid:
+                raise HTTPException(409, "This email is already linked to another Firebase account.")
+            connection.execute(
+                "UPDATE users SET firebase_uid=?, identifier=?, name=?, role=? WHERE id=?",
+                (uid, email, name, role, user["id"]),
+            )
+            user_id = user["id"]
+        else:
+            cursor = connection.execute(
+                """INSERT INTO users(firebase_uid,identifier,name,role,password_hash)
+                   VALUES(?,?,?,?,?)""",
+                (uid, email, name, role, hash_password(secrets.token_urlsafe(64))),
+            )
+            user_id = cursor.lastrowid
+        connection.commit()
+        user = connection.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    return {
+        "id": user["id"], "name": user["name"], "role": user["role"],
+        "identifier": user["identifier"], "register_no": user["register_no"],
+        "department": user["department"], "semester": user["semester"],
+        "theme": user["theme"], "dietary_preference": user["dietary_preference"],
+    }
 
 def init_db():
     with connect() as c:
         c.executescript('''
         CREATE TABLE IF NOT EXISTS users(
             id INTEGER PRIMARY KEY,
+            firebase_uid TEXT UNIQUE,
             identifier TEXT UNIQUE NOT NULL,
             name TEXT NOT NULL,
             role TEXT NOT NULL CHECK(role IN ('student','manager','reviewer')),
@@ -160,11 +204,6 @@ def init_db():
             semester TEXT,
             theme TEXT DEFAULT 'light',
             dietary_preference TEXT DEFAULT 'non_veg'
-        );
-        CREATE TABLE IF NOT EXISTS sessions(
-            token TEXT PRIMARY KEY,
-            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            expires_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS feedback(
             id INTEGER PRIMARY KEY,
@@ -316,6 +355,9 @@ def init_db():
         user_cols = [r["name"] for r in c.execute("PRAGMA table_info(users)").fetchall()]
         if "dietary_preference" not in user_cols:
             c.execute("ALTER TABLE users ADD COLUMN dietary_preference TEXT DEFAULT 'non_veg'")
+        if "firebase_uid" not in user_cols:
+            c.execute("ALTER TABLE users ADD COLUMN firebase_uid TEXT")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid) WHERE firebase_uid IS NOT NULL")
 
         # Migrate issue_groups columns for Risk Engine
         ig_cols = [r["name"] for r in c.execute("PRAGMA table_info(issue_groups)").fetchall()]
@@ -348,142 +390,32 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_week_records_group ON issue_week_records(group_id, week_key);
         ''')
 
-        # Seed initial users if empty
-        if c.execute("SELECT COUNT(*) n FROM users").fetchone()["n"] == 0:
-            c.execute(
-                "INSERT INTO users(identifier,name,role,password_hash,register_no,department,semester,dietary_preference) VALUES(?,?,?,?,?,?,?,?)",
-                ("student@srm.edu", "Vatsan Kumar", "student", hash_password("Student@123"), "RA2311003010001", "Computer Science", "Semester 1", "non_veg")
-            )
-            c.execute(
-                "INSERT INTO users(identifier,name,role,password_hash) VALUES(?,?,?,?)",
-                ("manager@srm.edu", "Mess Manager", "manager", hash_password("Manager@123"))
-            )
-
-        # Seed 100 database-only demo student accounts. Passwords are random,
-        # stored only as hashes, and are not exposed by the application.
-        for student_number in range(1, 101):
-            identifier = "demo.student@srm.edu" if student_number == 1 else f"demo.student.{student_number:03d}@srm.edu"
-            exists = c.execute("SELECT 1 FROM users WHERE identifier=?", (identifier,)).fetchone()
-            if not exists:
-                c.execute(
-                    """INSERT INTO users(identifier,name,role,password_hash,department,semester,dietary_preference)
-                       VALUES(?,?,?,?,?,?,?)""",
-                    (identifier, f"Demo Student {student_number:03d}", "student", hash_password(secrets.token_urlsafe(32)), "Computer Science", "Semester 1", "non_veg")
-                )
-
-        demo_students = c.execute(
-            """SELECT id FROM users
-               WHERE identifier=? OR identifier LIKE 'demo.student.___@srm.edu'
-               ORDER BY CASE WHEN identifier='demo.student@srm.edu' THEN 0 ELSE 1 END, identifier""",
-            ("demo.student@srm.edu",)
-        ).fetchall()
-        seed_date = datetime.now(TZ).date().isoformat()
-        seed_now = datetime.now(TZ).isoformat()
-        demo_feedback = {
-            "breakfast": (
-                "Demo feedback: Breakfast too salty",
-                "Food taste",
-                "Breakfast was too salty; the salt level was noticeably high and should be reduced.",
-                "We are reviewing the breakfast recipe and will reduce the salt level in the next batch."
-            ),
-            "lunch": (
-                "Demo feedback: Lunch served at low temperature",
-                "Food temperature",
-                "Lunch was served at a low temperature and should be kept warmer during service.",
-                "The lunch team will check holding temperatures and serve the meal warmer."
-            ),
-            "snacks": (
-                "Demo feedback: Snacks quantity too low",
-                "Food quantity",
-                "The snacks quantity was too low, and the serving ran short before everyone was served.",
-                "We will increase the snack quantity and monitor replenishment during service."
-            ),
-            "dinner": (
-                "Demo feedback: Dinner needs more spice",
-                "Food taste",
-                "Dinner had less spice than expected; please increase the spice level slightly.",
-                "The dinner team will adjust the spice level while keeping the recipe balanced."
-            )
-        }
-        if demo_students:
-            for meal in MEALS:
-                title, category, description, response = demo_feedback[meal["id"]]
-                deadline = datetime.combine(
-                    date.fromisoformat(seed_date),
-                    datetime.strptime(meal["end"], "%H:%M").time(),
-                    TZ
-                ) + timedelta(hours=24)
-                issue_key = f"demo_seed_{meal['id']}_v1"
-                c.execute(
-                    """INSERT OR IGNORE INTO issue_groups(
-                           meal_id,service_date,issue_key,title,summary,count,status,response,
-                           responded_at,deadline,category,first_reported_at,last_reported_at
-                       ) VALUES(?,?,?,?,?,0,'Responded',?,?,?,?,?,?)""",
-                    (meal["id"], seed_date, issue_key, title, description, response,
-                     seed_now, deadline.isoformat(), category, seed_now, seed_now)
-                )
-                group = c.execute(
-                    "SELECT id FROM issue_groups WHERE meal_id=? AND service_date=? AND issue_key=?",
-                    (meal["id"], seed_date, issue_key)
-                ).fetchone()
-                for student in demo_students:
-                    existing_rows = c.execute(
-                        """SELECT id FROM complaints WHERE user_id=? AND meal_id=? AND service_date=?
-                           AND title LIKE 'Demo feedback:%' ORDER BY id""",
-                        (student["id"], meal["id"], seed_date)
-                    ).fetchall()
-                    if existing_rows:
-                        complaint_id = existing_rows[0]["id"]
-                        c.execute(
-                            """UPDATE complaints SET category=?,title=?,description=?,status='Responded',
-                               processed_for_ai=1 WHERE id=?""",
-                            (category, title, description, complaint_id)
-                        )
-                        for duplicate in existing_rows[1:]:
-                            c.execute("DELETE FROM complaints WHERE id=?", (duplicate["id"],))
-                    else:
-                        cur = c.execute(
-                            """INSERT INTO complaints(
-                                   user_id,meal_id,service_date,category,title,description,status,
-                                   processed_for_ai,created_at
-                               ) VALUES(?,?,?,?,?,?,'Responded',1,?)""",
-                            (student["id"], meal["id"], seed_date, category, title, description, seed_now)
-                        )
-                        complaint_id = cur.lastrowid
-                    c.execute(
-                        "INSERT OR IGNORE INTO complaint_group_links(complaint_id,group_id) VALUES(?,?)",
-                        (complaint_id, group["id"])
-                    )
-                c.execute(
-                    """UPDATE issue_groups SET title=?,summary=?,count=(
-                           SELECT COUNT(*) FROM complaint_group_links WHERE group_id=?
-                       ),status='Responded',response=?,responded_at=?,deadline=?,category=? WHERE id=?""",
-                    (title, description, group["id"], response, seed_now, deadline.isoformat(), category, group["id"])
-                )
-                c.execute(
-                    """INSERT OR IGNORE INTO response_cycles(
-                           group_id,cycle_number,started_at,deadline,responded_at,response_text,status
-                       ) VALUES(?,1,?,?,?,?, 'Responded')""",
-                    (group["id"], seed_now, deadline.isoformat(), seed_now, response)
-                )
-                c.execute(
-                    """UPDATE response_cycles SET deadline=?,responded_at=?,response_text=?,status='Responded'
-                       WHERE group_id=? AND cycle_number=1""",
-                    (deadline.isoformat(), seed_now, response, group["id"])
-                )
-                week_key = get_calendar_week_key(datetime.fromisoformat(seed_date))
-                c.execute(
-                    "INSERT OR IGNORE INTO issue_week_records(group_id,week_key,first_seen_at) VALUES(?,?,?)",
-                    (group["id"], week_key, seed_now)
-                )
-                reconcile_issue_risk(c, group["id"])
-
-        # Seed reviewer if missing
-        if c.execute("SELECT COUNT(*) n FROM users WHERE identifier='reviewer@srm.edu'").fetchone()["n"] == 0:
-            c.execute(
-                "INSERT INTO users(identifier,name,role,password_hash) VALUES(?,?,?,?)",
-                ("reviewer@srm.edu", "Hostel Warden (Reviewer)", "reviewer", hash_password("Reviewer@123"))
-            )
+        # Purge records created by the former demo-seeding routine. This also
+        # cleans existing local databases during the Firebase auth migration.
+        legacy_session_table = c.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sessions'"
+        ).fetchone()
+        seeded_users = [row["id"] for row in c.execute(
+            """SELECT id FROM users WHERE identifier IN (
+                   'student@srm.edu','manager@srm.edu','reviewer@srm.edu'
+               ) OR identifier LIKE 'demo.student%@srm.edu'"""
+        ).fetchall()]
+        seeded_user_ids = [row["id"] for row in c.execute(
+            "SELECT id FROM users WHERE register_no='RA2311003010001' OR name LIKE 'Demo Student %'"
+        ).fetchall()]
+        seeded_user_ids = list(set(seeded_user_ids + seeded_users))
+        if seeded_user_ids:
+            placeholders = ",".join("?" for _ in seeded_user_ids)
+            if legacy_session_table:
+                c.execute(f"DELETE FROM sessions WHERE user_id IN ({placeholders})", seeded_user_ids)
+            c.execute(f"DELETE FROM feedback WHERE user_id IN ({placeholders})", seeded_user_ids)
+            c.execute(f"DELETE FROM complaints WHERE user_id IN ({placeholders})", seeded_user_ids)
+            c.execute(f"DELETE FROM users WHERE id IN ({placeholders})", seeded_user_ids)
+        if legacy_session_table:
+            c.execute("DROP TABLE sessions")
+        c.execute("DELETE FROM issue_groups WHERE issue_key LIKE 'demo_seed_%' OR title LIKE 'Demo feedback:%'")
+        c.execute("DELETE FROM complaints WHERE title LIKE 'Demo feedback:%'")
+        c.execute("DELETE FROM menu_items WHERE description='Official CEG Hostel Menu'")
 
         # Seed initial week records and response cycles for existing issue groups if missing
         groups = c.execute("SELECT id, meal_id, service_date, deadline, response, responded_at, status FROM issue_groups").fetchall()
@@ -517,10 +449,13 @@ def _seed_initial_groups():
 
 _seed_initial_groups()
 
-class LoginBody(BaseModel):
-    identifier: str
-    password: str
-    role: Optional[str] = None
+@app.post("/api/auth/firebase")
+def login_with_firebase(authorization: Optional[str] = Header(default=None)):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, "A Firebase ID token is required.")
+    claims = verify_firebase_token(authorization.split(" ", 1)[1])
+    user = firebase_profile(claims)
+    return {"token": authorization.split(" ", 1)[1], "user": user}
 
 class FeedbackBody(BaseModel):
     meal_id: str
@@ -568,14 +503,8 @@ def current_user(authorization: Optional[str] = Header(default=None)):
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(401, "Please sign in to continue")
     token = authorization.split(" ", 1)[1]
-    with connect() as c:
-        row = c.execute(
-            "SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires_at>?",
-            (token, datetime.now(TZ).isoformat())
-        ).fetchone()
-    if not row:
-        raise HTTPException(401, "Your session has expired. Please sign in again.")
-    return dict(row)
+    claims = verify_firebase_token(token)
+    return firebase_profile(claims)
 
 def require_role(role):
     def dependency(user=Depends(current_user)):
@@ -619,42 +548,6 @@ def resolve_menu_items(target_date: date, meal_id: str, dietary: str = "non_veg"
     day_name = target_date.strftime("%A")
     return get_official_menu(day_name, meal_id, dietary)
 
-@app.post("/api/auth/login")
-def login(body: LoginBody):
-    ident = body.identifier.strip().lower()
-    with connect() as c:
-        user = c.execute("SELECT * FROM users WHERE LOWER(identifier)=? OR LOWER(register_no)=?", (ident, ident)).fetchone()
-    if not user or not check_password(body.password, user["password_hash"]):
-        raise HTTPException(401, "Incorrect email or password")
-
-    # Credential-only login determines the dashboard from the stored account role.
-    if body.role in ("manager", "reviewer"):
-        if user["role"] not in ("manager", "reviewer"):
-            raise HTTPException(403, "This account belongs to a student login. Choose student login.")
-    elif body.role and user["role"] != body.role:
-        raise HTTPException(403, "This account belongs to a different login type. Choose the correct login.")
-
-    token = secrets.token_urlsafe(36)
-    expires = (datetime.now(TZ) + timedelta(days=7)).isoformat()
-    with connect() as c:
-        c.execute("INSERT INTO sessions(token,user_id,expires_at) VALUES(?,?,?)", (token, user["id"], expires))
-        c.commit()
-
-    return {
-        "token": token,
-        "user": {
-            "id": user["id"],
-            "name": user["name"],
-            "role": user["role"],
-            "identifier": user["identifier"],
-            "register_no": user["register_no"],
-            "department": user["department"],
-            "semester": user["semester"],
-            "theme": user["theme"],
-            "dietary_preference": user["dietary_preference"]
-        }
-    }
-
 @app.get("/api/auth/me")
 def me(user=Depends(current_user)):
     return {
@@ -672,10 +565,7 @@ def me(user=Depends(current_user)):
 @app.post("/api/auth/logout")
 def logout(authorization: Optional[str] = Header(default=None)):
     if authorization and authorization.lower().startswith("bearer "):
-        token = authorization.split(" ", 1)[1]
-        with connect() as c:
-            c.execute("DELETE FROM sessions WHERE token=?", (token,))
-            c.commit()
+        verify_firebase_token(authorization.split(" ", 1)[1])
     return {"ok": True}
 
 @app.put("/api/profile/theme")

@@ -1,12 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Utensils, LayoutDashboard, CalendarDays, MessageSquare, BrainCircuit,
-  ClipboardCheck, BarChart3, Settings, Sun, Moon, Search, ChevronRight,
+  Utensils, LayoutDashboard, CalendarDays, BookOpen, MessageSquare, BrainCircuit,
+  BarChart3, Settings, Sun, Moon, Search, ChevronRight,
   Clock3, Star, AlertTriangle, CheckCircle2, CircleAlert, Coffee, Soup,
   Salad, Pencil, Trash2, Plus, X, Send, Download, RefreshCw, LogOut,
   ShieldCheck, Filter, Eye, Check, Users, Activity, Bell, AlertOctagon,
   ShieldAlert, Award, FileText, CheckCheck, Info, Flame
 } from 'lucide-react';
+import CompleteMenu from '../../student-app/src/CompleteMenu.jsx';
+import { auth } from '../../student-app/src/firebase.js';
+import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
 
 const API = import.meta.env.VITE_API_URL || '/api';
 const STORE_KEY = 'messmate_manager_session';
@@ -22,30 +25,24 @@ const NAV = [
   ['dashboard', 'Dashboard', LayoutDashboard],
   ['today', "Today's Feedback", MessageSquare],
   ['escalations', 'Escalations', AlertOctagon],
-  ['menu', 'Menu Management', CalendarDays],
+  ['menu', 'Complete Menu', BookOpen],
   ['feedback', 'Feedback History', MessageSquare],
-  ['insights', 'AI Insights', BrainCircuit],
-  ['responses', 'Responses', ClipboardCheck],
-  ['reports', 'Reports', BarChart3],
   ['settings', 'Settings', Settings]
 ];
 
 async function api(path, token, options = {}) {
+  const activeToken = auth.currentUser ? await auth.currentUser.getIdToken() : token;
   const res = await fetch(`${API}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(activeToken ? { Authorization: `Bearer ${activeToken}` } : {}),
       ...(options.headers || {})
     }
   });
   const data = await res.json().catch(() => ({ detail: 'Unexpected server response.' }));
   if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
   return data;
-}
-
-function readSession() {
-  try { return JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch { return null; }
 }
 
 function dateISO(date = new Date()) {
@@ -144,8 +141,8 @@ function RiskBadge({ issue, onClick }) {
 }
 
 function Login({ onLogin, error, busy }) {
-  const [identifier, setIdentifier] = useState('manager@srm.edu');
-  const [password, setPassword] = useState('Manager@123');
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
 
   return (
@@ -165,13 +162,14 @@ function Login({ onLogin, error, busy }) {
           <h2>Welcome back.</h2>
           <p>Sign in to review student feedback, inspect risk scores, and verify resolutions.</p>
           <form onSubmit={e => { e.preventDefault(); onLogin(identifier, password); }}>
-            <label htmlFor="manager-id">Email / username</label>
+            <label htmlFor="manager-id">Manager email</label>
             <input
               id="manager-id"
               autoComplete="username"
               value={identifier}
               onChange={e => setIdentifier(e.target.value)}
-              placeholder="manager@srm.edu"
+              type="email"
+              placeholder="manager@example.edu"
               required
             />
             <label htmlFor="manager-password">Password</label>
@@ -196,28 +194,6 @@ function Login({ onLogin, error, busy }) {
           </form>
           <div className="login-note">
             <ShieldCheck size={15}/> Authorized personnel only. Student accounts access the mobile app.
-          </div>
-          <div className="demo-credentials">
-            <strong>Quick Demo Accounts</strong>
-            <div style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
-              <button
-                type="button"
-                className="demo-role-btn"
-                onClick={() => { setIdentifier('manager@srm.edu'); setPassword('Manager@123'); }}
-              >
-                Mess Manager
-              </button>
-              <button
-                type="button"
-                className="demo-role-btn"
-                onClick={() => { setIdentifier('reviewer@srm.edu'); setPassword('Reviewer@123'); }}
-              >
-                Hostel Warden (Reviewer)
-              </button>
-            </div>
-            <small style={{ marginTop: '4px' }}>
-              Reviewers have authority to verify resolutions &amp; close escalations.
-            </small>
           </div>
         </div>
         <span className="login-copyright">MESSMATE / ENTERPRISE RISK &amp; OPERATIONS</span>
@@ -678,7 +654,7 @@ function EscalationsView({ escalations, loading, onRefresh, isReviewer, onAudit,
 }
 
 function App({ embeddedSession, onEmbeddedLogout } = {}) {
-  const [session, setSession] = useState(() => embeddedSession || readSession());
+  const [session, setSession] = useState(() => embeddedSession || null);
   const [feedbackData, setFeedbackData] = useState([]);
   const [theme, setTheme] = useState(() => localStorage.getItem('messmate_manager_theme') || 'light');
   const [active, setActive] = useState('dashboard');
@@ -775,9 +751,6 @@ function App({ embeddedSession, onEmbeddedLogout } = {}) {
     };
   }, [token, loadOverview]);
 
-  useEffect(() => {
-    if (token && active === 'menu') loadMenu(menuDate, menuDietary);
-  }, [token, active, menuDate, menuDietary, loadMenu]);
 
   async function triggerAI() {
     try {
@@ -797,14 +770,7 @@ function App({ embeddedSession, onEmbeddedLogout } = {}) {
     setBusy(true);
     setLoginError('');
     try {
-      const data = await api('/auth/login', null, {
-        method: 'POST',
-        body: JSON.stringify({ identifier, password, role: 'manager' })
-      });
-      setSession(data);
-      localStorage.setItem(STORE_KEY, JSON.stringify(data));
-      setTheme(data.user?.theme || theme);
-      setToast(`Signed in as ${data.user?.name || 'Administrator'}.`);
+      await signInWithEmailAndPassword(auth, identifier.trim(), password);
     } catch (e) {
       setLoginError(e.message);
     } finally {
@@ -813,7 +779,7 @@ function App({ embeddedSession, onEmbeddedLogout } = {}) {
   }
 
   async function logout() {
-    try { if (token) await api('/auth/logout', token, { method: 'POST' }); } catch {}
+    try { if (auth.currentUser) await signOut(auth); } catch {}
     localStorage.removeItem(STORE_KEY);
     setSession(null);
     setOverview(null);
@@ -996,18 +962,10 @@ function App({ embeddedSession, onEmbeddedLogout } = {}) {
               {id === 'escalations' && activeEscalationsCount > 0 && (
                 <small className="nav-count" style={{ background: 'var(--red)' }}>{activeEscalationsCount}</small>
               )}
-              {id === 'responses' && openIssues.length > 0 && (
-                <small className="nav-count">{openIssues.length}</small>
-              )}
             </button>
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="privacy-card">
-            <ShieldCheck size={18}/>
-            <strong>Student privacy protected</strong>
-            <p>Issues are grouped by topic and meal. Individual student identities are protected.</p>
-          </div>
           <div className="profile-row">
             <span className="avatar">{initials(session.user?.name)}</span>
             <div className="profile-copy">
@@ -1058,22 +1016,16 @@ function App({ embeddedSession, onEmbeddedLogout } = {}) {
                   dashboard: 'Overview of mess feedback, food quality, and deterministic risk score engine.',
                   today: 'A single AI-assisted summary of all student feedback for today, with per-meal response actions.',
                   escalations: 'Monitor and inspect high-risk issues (score ≥ 60) and food safety hazards.',
-                  menu: 'Official Anna University CEG weekly schedule with customizable overrides.',
+                  menu: 'View the complete weekly menu, just like the student dashboard.',
                   feedback: 'View the complete feedback history and its manager response for each grouped issue.',
-                  insights: 'Patterns and recurring issues grouped by fast Gemini intelligence.',
-                  responses: 'Manage and respond to student complaints within the 24-hour window.',
-                  reports: 'Review and export comprehensive meal feedback and risk reports.',
                   settings: 'Manage your appearance and account preferences.'
                 })[active]}
               </p>
             </div>
             <div className="heading-actions">
-              <Button onClick={() => active === 'menu' ? loadMenu(menuDate) : loadOverview()}>
+              <Button onClick={() => loadOverview()}>
                 <RefreshCw size={15}/> Refresh
               </Button>
-              {active === 'reports' && (
-                <Button kind="primary" onClick={exportCSV}><Download size={15}/> Export CSV</Button>
-              )}
             </div>
           </div>
 
@@ -1123,22 +1075,7 @@ function App({ embeddedSession, onEmbeddedLogout } = {}) {
           )}
 
           {active === 'menu' && (
-            <MenuManagement
-              menu={menu}
-              menuDate={menuDate}
-              setMenuDate={setMenuDate}
-              menuDietary={menuDietary}
-              setMenuDietary={d => { setMenuDietary(d); loadMenu(menuDate, d); }}
-              onAdd={() => {
-                setMenuForm({ name: '', description: '', dietary_type: menuDietary === 'veg' ? 'Veg' : 'Non-Veg', meal_id: 'breakfast' });
-                setModal({ type: 'menu' });
-              }}
-              onEdit={item => {
-                setMenuForm({ id: item.id || null, name: item.name || '', description: item.description || '', dietary_type: item.dietary_type || 'Veg', meal_id: item.meal_id || 'breakfast' });
-                setModal({ type: 'menu', item });
-              }}
-              onDelete={deleteMenuItem}
-            />
+            <CompleteMenu token={token} dietary={menuDietary} setDietary={setMenuDietary}/>
           )}
 
           {active === 'feedback' && (
@@ -1161,46 +1098,6 @@ function App({ embeddedSession, onEmbeddedLogout } = {}) {
             />
           )}
 
-          {active === 'insights' && (
-            <Insights
-              issues={issues}
-              aiStatus={overview?.ai_status}
-              riskSummary={overview?.risk_summary}
-              onTriggerAI={triggerAI}
-              navigate={setActive}
-            />
-          )}
-
-          {active === 'responses' && (
-            <IssueList
-              issues={filteredIssues.filter(i => i.status !== 'Responded')}
-              search={search}
-              setSearch={setSearch}
-              mealFilter={mealFilter}
-              setMealFilter={setMealFilter}
-              statusFilter={statusFilter}
-              setStatusFilter={setStatusFilter}
-              tabFilter="all"
-              setTabFilter={setTabFilter}
-              respond={respond}
-              onAudit={openAudit}
-              onVerify={openVerify}
-              isReviewer={isReviewer}
-              responseView
-            />
-          )}
-
-          {active === 'reports' && (
-            <Reports
-              overview={overview}
-              issues={issues}
-              avgRating={avgRating}
-              responseRate={responseRate}
-              exportCSV={exportCSV}
-              onAudit={openAudit}
-            />
-          )}
-
           {active === 'settings' && (
             <SettingsPanel theme={theme} toggleTheme={toggleTheme} user={session.user}/>
           )}
@@ -1213,7 +1110,7 @@ function App({ embeddedSession, onEmbeddedLogout } = {}) {
       </main>
 
       <nav className="mobile-nav">
-        {NAV.filter(([id]) => ['dashboard', 'today', 'escalations', 'menu', 'feedback', 'responses'].includes(id)).map(([id, label, Icon]) => (
+        {NAV.filter(([id]) => ['dashboard', 'today', 'escalations', 'menu', 'feedback'].includes(id)).map(([id, label, Icon]) => (
           <button key={id} className={active === id ? 'active' : ''} onClick={() => setActive(id)}>
             <Icon size={18}/>
             <span>{label.split(' ')[0]}</span>
@@ -1335,14 +1232,6 @@ function App({ embeddedSession, onEmbeddedLogout } = {}) {
 function TodayFeedbackOverview({ overview, issues, feedbackData, onTriggerAI, onSummarizeMeal, onSaveMealResponse }) {
   const today = overview?.date || dateISO();
   const todayIssues = useMemo(() => (issues || []).filter(issue => issue.service_date === today), [issues, today]);
-  const todayFeedback = useMemo(() => (feedbackData || []).filter(item => item.service_date === today), [feedbackData, today]);
-
-  const summary = useMemo(() => {
-    const text = [...todayIssues, ...todayFeedback].map(item => `${item.title || ''} ${item.summary || ''} ${item.category || ''}`.trim()).filter(Boolean);
-    if (!text.length) return 'No student feedback was submitted for today yet.';
-    const top = [...new Set(text.flatMap(s => s.toLowerCase().split(/[^a-z0-9]+/).filter(word => word.length > 4)))].slice(0, 8);
-    return `Today's feedback is dominated by ${top.length ? top.join(', ') : 'overall dining quality'} themes, with the strongest concerns centered on service consistency, taste, and meal timing across the campus.`;
-  }, [todayIssues, todayFeedback]);
 
   const mealCards = useMemo(() => MEALS.map(meal => {
     const mealIssues = todayIssues.filter(item => item.meal_id === meal.id);
@@ -1373,24 +1262,6 @@ function TodayFeedbackOverview({ overview, issues, feedbackData, onTriggerAI, on
 
   return (
     <div className="dashboard-content">
-      <section className="hero-panel">
-        <div>
-          <span className="hero-kicker"><BrainCircuit size={14}/> TODAY'S FEEDBACK OVERVIEW</span>
-          <h2>Live campus sentiment for {dateLabel(new Date(today))}.<br/><em>Summarized with Gemini-assisted insight.</em></h2>
-          <p>{summary}</p>
-          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-            <Button kind="light" onClick={onTriggerAI}>
-              <RefreshCw size={15}/> Refresh AI summary
-            </Button>
-          </div>
-        </div>
-        <div className="hero-stat">
-          <span>FEEDBACK TODAY</span>
-          <strong>{todayIssues.reduce((total, issue) => total + (Number(issue.count) || 0), 0) + (todayFeedback.filter(item => item.type === 'Rating').length || 0)}</strong>
-          <small>{todayIssues.length} grouped issue(s) and {todayFeedback.filter(item => item.type === 'Rating').length} rating entries</small>
-        </div>
-      </section>
-
       <div className="content-grid" style={{ gridTemplateColumns: '1fr' }}>
         <section className="panel">
           <div className="panel-heading">
@@ -1476,32 +1347,6 @@ function Dashboard({ overview, issues, openIssues, avgRating, totalRatings, tota
 
   return (
     <div className="dashboard-content">
-      <section className="hero-panel">
-        <div>
-          <span className="hero-kicker"><Activity size={14}/> DINING OPERATIONS &amp; RISK MONITORING</span>
-          <h2>Deterministic Risk Scoring.<br/><em>Data-driven kitchen follow-ups.</em></h2>
-          <p>Recurring issues earn recurrence points over distinct calendar weeks, response delays accumulate penalties, and verified actions restore score balance.</p>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <Button kind="light" onClick={() => navigate('escalations')}>
-              <AlertOctagon size={15}/> View Escalations ({activeEscalationsCount})
-            </Button>
-            <Button kind="secondary" onClick={() => navigate('feedback')}>
-              Review Feedback <ChevronRight size={15}/>
-            </Button>
-          </div>
-        </div>
-        <div className="hero-stat">
-          <span>ACTIVE ESCALATIONS</span>
-          <strong style={{ color: activeEscalationsCount > 0 ? '#fca5a5' : '#fff' }}>{activeEscalationsCount}</strong>
-          <small>{openIssues.length} open issue group(s)</small>
-          <div className="hero-bars">
-            {[26, 42, 33, 58, 48, 75, 63, 92].map((h, i) => (
-              <i key={i} style={{ height: `${h}%` }}/>
-            ))}
-          </div>
-        </div>
-      </section>
-
       <div className="metric-grid">
         <Metric
           label="Total feedback"
@@ -1556,7 +1401,7 @@ function Dashboard({ overview, issues, openIssues, avgRating, totalRatings, tota
           })}
           <div className="panel-foot">
             <span>Ratings use submitted student feedback.</span>
-            <button className="text-button" onClick={() => navigate('reports')}>View reports <ChevronRight size={14}/></button>
+            <button className="text-button" onClick={() => navigate('feedback')}>View feedback history <ChevronRight size={14}/></button>
           </div>
         </section>
 
@@ -1566,7 +1411,7 @@ function Dashboard({ overview, issues, openIssues, avgRating, totalRatings, tota
               <span className="eyebrow">RISK &amp; COMPLIANCE</span>
               <h2>High priority issues</h2>
             </div>
-            <button className="text-button" onClick={() => navigate('responses')}>All open ({openIssues.length}) <ChevronRight size={14}/></button>
+            <button className="text-button" onClick={() => navigate('feedback')}>All open ({openIssues.length}) <ChevronRight size={14}/></button>
           </div>
           {prioritizedIssues.slice(0, 3).map(issue => (
             <div className="priority-row" key={issue.id}>
@@ -1588,8 +1433,8 @@ function Dashboard({ overview, issues, openIssues, avgRating, totalRatings, tota
               <span>No open grouped issues at the moment.</span>
             </div>
           )}
-          <Button onClick={() => navigate('insights')} style={{ marginTop: '12px' }}>
-            <BrainCircuit size={15}/> View AI feedback trends
+          <Button onClick={() => navigate('today')} style={{ marginTop: '12px' }}>
+            <BrainCircuit size={15}/> View today's feedback
           </Button>
         </section>
       </div>
@@ -1758,6 +1603,7 @@ function IssueList({ issues, search, setSearch, mealFilter, setMealFilter, statu
 
 function FeedbackHistoryView({ issues, search, setSearch, mealFilter, setMealFilter, statusFilter, setStatusFilter, tabFilter, setTabFilter, respond, onAudit, onVerify, isReviewer = false, token, setError }) {
   const [expandedId, setExpandedId] = useState(null);
+  const [responseOnlyId, setResponseOnlyId] = useState(null);
   const [detailMap, setDetailMap] = useState({});
   const [loadingIds, setLoadingIds] = useState({});
 
@@ -1777,6 +1623,7 @@ function FeedbackHistoryView({ issues, search, setSearch, mealFilter, setMealFil
   function toggleIssue(issue) {
     const nextOpen = expandedId === issue.id ? null : issue.id;
     setExpandedId(nextOpen);
+    setResponseOnlyId(null);
     if (nextOpen && !detailMap[issue.id]) {
       fetchDetail(issue);
     }
@@ -1837,25 +1684,46 @@ function FeedbackHistoryView({ issues, search, setSearch, mealFilter, setMealFil
               const complaintList = detail?.complaints || [];
               return (
                 <article key={issue.id} className="feedback-history-card" style={{ border: '1px solid var(--line)', borderRadius: '14px', background: 'var(--surface-2)', overflow: 'hidden' }}>
-                  <button type="button" onClick={() => toggleIssue(issue)} style={{ width: '100%', background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>
-                    <div style={{ padding: '16px 18px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto auto', alignItems: 'center', gap: '12px' }}>
-                      <div style={{ textAlign: 'left', minWidth: 0 }}>
+                  <div style={{ padding: '16px 18px 4px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto auto', alignItems: 'center', gap: '12px' }}>
+                    <button type="button" onClick={() => toggleIssue(issue)} style={{ textAlign: 'left', minWidth: 0, background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>
                         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '4px' }}>
                           <span className="eyebrow" style={{ color: 'var(--accent)' }}>{issue.meal_id?.toUpperCase() || 'GENERAL'} · {shortDate(issue.service_date)}</span>
                           <Status value={issue.status}/>
                         </div>
                         <strong style={{ display: 'block', marginBottom: '5px', fontSize: '15px' }}>{issue.title}</strong>
                         <small style={{ color: 'var(--muted)', display: 'block', overflowWrap: 'anywhere' }}>{issue.summary}</small>
-                      </div>
-                      <RiskBadge issue={issue} onClick={onAudit}/>
-                      <span style={{ fontSize: '18px', color: 'var(--muted)' }}>{isExpanded ? '−' : '+'}</span>
-                    </div>
-                  </button>
+                    </button>
+                    <RiskBadge issue={issue} onClick={onAudit}/>
+                    <button type="button" onClick={() => toggleIssue(issue)} aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${issue.title}`} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '18px' }}>{isExpanded ? '−' : '+'}</button>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0 18px 12px' }}>
+                    <Button
+                      kind="secondary"
+                      onClick={() => {
+                        setExpandedId(issue.id);
+                        setResponseOnlyId(issue.id);
+                        if (!detailMap[issue.id]) fetchDetail(issue);
+                      }}
+                    >
+                      <MessageSquare size={13}/> Response
+                    </Button>
+                  </div>
 
                   {isExpanded && (
                     <div style={{ borderTop: '1px solid var(--line)', padding: '16px 18px', background: 'var(--surface)' }}>
                       {loadingIds[issue.id] ? (
                         <div className="loading-box"><RefreshCw className="spin" size={16}/> Loading feedback history…</div>
+                      ) : responseOnlyId === issue.id ? (
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                            <strong>Manager response</strong>
+                            <Button kind="secondary" onClick={() => setResponseOnlyId(null)}>Show feedback</Button>
+                          </div>
+                          <div style={{ border: '1px solid var(--line)', borderRadius: '10px', padding: '14px', background: 'var(--surface-2)', minHeight: '90px', whiteSpace: 'pre-wrap', lineHeight: 1.6, fontSize: '13px' }}>
+                            {issue.response || detail?.response || 'No manager response has been saved for this feedback yet.'}
+                          </div>
+                        </div>
                       ) : (
                         <div style={{ display: 'grid', gridTemplateColumns: '1.25fr 1fr', gap: '16px' }}>
                           <div>

@@ -7,13 +7,12 @@ MessMate serves student and manager dashboards from one React/Vite app at `http:
 - `backend/` — shared API, authentication, SQLite persistence, menu management, anonymised complaint aggregation, manager responses and deadlines.
 
 ## Manager web interface
-The manager frontend includes Manager Login, Dashboard, Menu Management, Feedback & Complaints, AI Insights, Responses, Reports and Settings. The UI uses a palette sampled from the supplied reference image, a standard system font stack, and standard Lucide icons; no generated font/theme assets are imported.
+The manager frontend includes Dashboard, Today's Feedback, Escalations, Complete Menu, Feedback History and Settings. Manager and reviewer access is assigned only through the backend's Firebase email allowlists.
 
-## Demo accounts
-- Student: `student@srm.edu` / `Student@123`
-- Manager: `manager@srm.edu` / `Manager@123`
+## Firebase Authentication
+Email/password sign-in and student registration use Firebase Authentication. Add authorized manager and reviewer emails to the backend-only `FIREBASE_MANAGER_EMAILS` and `FIREBASE_REVIEWER_EMAILS` allowlists. Configure Firebase Admin credentials in the backend environment using Application Default Credentials, `GOOGLE_APPLICATION_CREDENTIALS`, or `FIREBASE_SERVICE_ACCOUNT_JSON`; never commit service-account credentials.
 
-These are local demonstration credentials only.
+Enable Email/Password in the Firebase Console and configure the project's authorized domains. New student accounts must verify their email before using the app. Existing legacy demo accounts and synthetic feedback are removed during backend initialization.
 
 ## Run locally
 
@@ -49,5 +48,5 @@ The manager issue summaries use the configured LLM integration when an API key i
 ## Limitations
 - The college's official menu API is not connected.
 - The future risk-score formula is not implemented because its constraints are not yet defined.
-- Demo records are fictional. External meal photographs require an internet connection.
+- External meal photographs require an internet connection.
 - This is a hackathon MVP, not a production-hardened deployment.

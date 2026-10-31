@@ -15,7 +15,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
-from app.main import app, connect, hash_password
+from app import main as main_module
+from app.main import connect
 from app.risk_engine import (
     calculate_recurrence_points,
     calculate_delay_points,
@@ -29,7 +30,18 @@ from app.gemini_service import (
     normalise_rule_based
 )
 
-client = TestClient(app)
+os.environ["FIREBASE_MANAGER_EMAILS"] = "manager@test.invalid"
+os.environ["FIREBASE_REVIEWER_EMAILS"] = "reviewer@test.invalid"
+main_module.verify_firebase_token = lambda token: {
+    "uid": f"test-{token}",
+    "email": token,
+    "name": token.split("@", 1)[0],
+    "email_verified": True,
+}
+client = TestClient(main_module.app)
+
+def auth_headers(email):
+    return {"Authorization": f"Bearer {email}"}
 
 def test_database_schema_integrity():
     with connect() as c:
@@ -50,11 +62,7 @@ def test_database_schema_integrity():
             assert expected in cols, f"Missing column {expected} in issue_groups"
 
 def test_role_enforcement_and_access_control():
-    # Login student
-    r_std = client.post("/api/auth/login", json={"identifier": "student@srm.edu", "password": "Student@123", "role": "student"})
-    assert r_std.status_code == 200
-    std_token = r_std.json()["token"]
-    std_headers = {"Authorization": f"Bearer {std_token}"}
+    std_headers = auth_headers("student@test.invalid")
 
     # Student trying to access manager endpoints -> 403 Forbidden
     r_forbidden = client.get("/api/manager/overview", headers=std_headers)
@@ -63,28 +71,19 @@ def test_role_enforcement_and_access_control():
     r_issues_forbidden = client.get("/api/manager/issues", headers=std_headers)
     assert r_issues_forbidden.status_code == 403
 
-    # Login manager
-    r_mgr = client.post("/api/auth/login", json={"identifier": "manager@srm.edu", "password": "Manager@123", "role": "manager"})
-    assert r_mgr.status_code == 200
-    mgr_token = r_mgr.json()["token"]
-    mgr_headers = {"Authorization": f"Bearer {mgr_token}"}
+    mgr_headers = auth_headers("manager@test.invalid")
 
     # Manager can access manager overview
     r_mgr_over = client.get("/api/manager/overview", headers=mgr_headers)
     assert r_mgr_over.status_code == 200
 
-    # Login reviewer
-    r_rev = client.post("/api/auth/login", json={"identifier": "reviewer@srm.edu", "password": "Reviewer@123", "role": "reviewer"})
-    assert r_rev.status_code == 200
-    rev_token = r_rev.json()["token"]
-    rev_headers = {"Authorization": f"Bearer {rev_token}"}
+    rev_headers = auth_headers("reviewer@test.invalid")
 
     r_rev_esc = client.get("/api/manager/escalations", headers=rev_headers)
     assert r_rev_esc.status_code == 200
 
 def test_student_privacy_guarantee():
-    r_mgr = client.post("/api/auth/login", json={"identifier": "manager@srm.edu", "password": "Manager@123", "role": "manager"})
-    mgr_headers = {"Authorization": f"Bearer {r_mgr.json()['token']}"}
+    mgr_headers = auth_headers("manager@test.invalid")
 
     # 1. Check overview endpoint
     over_data = client.get("/api/manager/overview", headers=mgr_headers).json()
@@ -176,9 +175,8 @@ def test_risk_score_calculation_and_escalation_flow():
         active_count = c.execute("SELECT COUNT(*) n FROM escalations WHERE group_id=? AND status='Active'", (group_id,)).fetchone()["n"]
         assert active_count == 1, "Escalation must be idempotent"
 
-    # Manager logs in and responds -> stops delay penalty
-    r_mgr = client.post("/api/auth/login", json={"identifier": "manager@srm.edu", "password": "Manager@123", "role": "manager"})
-    mgr_headers = {"Authorization": f"Bearer {r_mgr.json()['token']}"}
+    # Manager responds -> stops delay penalty
+    mgr_headers = auth_headers("manager@test.invalid")
 
     r_resp = client.post(f"/api/manager/issues/{group_id}/respond", headers=mgr_headers, json={
         "response": "Reduced salt in standard recipe and retrained cook staff."
@@ -192,8 +190,7 @@ def test_risk_score_calculation_and_escalation_flow():
         assert row_after_resp["recurrence_score"] == 45
 
     # Reviewer verifies resolution -> Trigger A resolution credit (-15 pts)
-    r_rev = client.post("/api/auth/login", json={"identifier": "reviewer@srm.edu", "password": "Reviewer@123", "role": "reviewer"})
-    rev_headers = {"Authorization": f"Bearer {r_rev.json()['token']}"}
+    rev_headers = auth_headers("reviewer@test.invalid")
 
     r_verify = client.post(f"/api/manager/issues/{group_id}/verify-resolution", headers=rev_headers, json={
         "notes": "Inspected kitchen, verified salt levels within campus nutrition standards.",
@@ -230,8 +227,7 @@ def test_urgent_food_safety_override():
         c.execute("DELETE FROM issue_groups WHERE issue_key = 'safety_override_test'")
         c.commit()
 
-    r_rev = client.post("/api/auth/login", json={"identifier": "reviewer@srm.edu", "password": "Reviewer@123", "role": "reviewer"})
-    rev_headers = {"Authorization": f"Bearer {r_rev.json()['token']}"}
+    rev_headers = auth_headers("reviewer@test.invalid")
 
     # Create a low-score issue (0 recurrence, 0 delay -> score 0)
     now_iso = datetime.now(timezone.utc).isoformat()
